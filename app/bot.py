@@ -47,7 +47,6 @@ class SecretaryBot:
 
     async def _guard_message(self, message: Message) -> bool:
         if not self._is_admin(message.from_user.id if message.from_user else None):
-            await message.answer("Доступ запрещён.")
             return False
         if message.chat.type != "private":
             return False
