@@ -10,6 +10,7 @@ from pathlib import Path
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -237,9 +238,30 @@ class SecretaryBot:
                         publisher = telegram if delivery.platform == "telegram" else vk
                         external_id = await publisher.publish(delivery)
                         await self.db.delivery_succeeded(delivery.id, external_id)
+                        await self._notify_admin(
+                            delivery.creator_id,
+                            f"✅ Публикация #{delivery.post_id}: «{delivery.target_name}» — опубликовано.",
+                        )
                     except Exception as exc:
                         log.exception("Delivery %s failed", delivery.id)
-                        await self.db.delivery_failed(delivery.id, str(exc), self.settings.max_delivery_attempts)
+                        permanent = isinstance(exc, (TelegramBadRequest, TelegramForbiddenError))
+                        max_attempts = 1 if permanent else self.settings.max_delivery_attempts
+                        await self.db.delivery_failed(delivery.id, str(exc), max_attempts)
+                        attempt = delivery.attempts + 1
+                        reason = self._friendly_delivery_error(exc)
+                        if permanent or attempt >= self.settings.max_delivery_attempts:
+                            await self._notify_admin(
+                                delivery.creator_id,
+                                f"❌ Публикация #{delivery.post_id}: «{delivery.target_name}» — не опубликовано.\n"
+                                f"Причина: {reason}",
+                            )
+                        else:
+                            await self._notify_admin(
+                                delivery.creator_id,
+                                f"⚠️ Публикация #{delivery.post_id}: «{delivery.target_name}» — попытка "
+                                f"{attempt}/{self.settings.max_delivery_attempts} не удалась. Бот повторит отправку.\n"
+                                f"Причина: {reason}",
+                            )
                     continue
                 for notice in await self.db.terminal_notifications():
                     lines = [f"Публикация #{notice['id']}: {'завершена' if notice['status'] == 'sent' else 'завершена с ошибками' }."]
@@ -267,6 +289,25 @@ class SecretaryBot:
                 Path(path).unlink(missing_ok=True)
             except OSError:
                 log.warning("Could not remove media file %s", path, exc_info=True)
+
+    async def _notify_admin(self, admin_id: int, text: str) -> None:
+        try:
+            await self.bot.send_message(admin_id, text)
+        except Exception:
+            log.exception("Could not send delivery status to admin %s", admin_id)
+
+    @staticmethod
+    def _friendly_delivery_error(error: Exception) -> str:
+        raw = str(error)
+        if "TOPIC_CLOSED" in raw:
+            return "топик Telegram закрыт. Откройте его или укажите другой message_thread_id."
+        if "message thread not found" in raw.lower():
+            return "топик Telegram не найден. Проверьте message_thread_id."
+        if "chat not found" in raw.lower():
+            return "чат Telegram не найден или бот не добавлен в него."
+        if isinstance(error, TelegramForbiddenError):
+            return "у бота нет права публиковать в этом Telegram-чате."
+        return raw[:700]
 
     async def run(self) -> None:
         await self.db.initialize()

@@ -20,6 +20,7 @@ class Delivery:
     creator_id: int
     platform: str
     target_key: str
+    target_name: str
     destination: str
     message_thread_id: int | None
     text: str
@@ -189,7 +190,8 @@ class Database:
         async with self.connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             row = await (await db.execute(
-                """SELECT d.id,d.post_id,d.platform,d.target_key,d.destination,d.message_thread_id,d.attempts,
+                """SELECT d.id,d.post_id,d.platform,d.target_key,d.target_name,d.destination,
+                          d.message_thread_id,d.attempts,
                           p.creator_id,p.text,p.entities_json
                    FROM deliveries d JOIN posts p ON p.id=d.post_id
                    WHERE p.status='scheduled' AND d.status IN ('pending','retry')
@@ -213,7 +215,8 @@ class Database:
             await db.commit()
             return Delivery(
                 id=row["id"], post_id=row["post_id"], creator_id=row["creator_id"],
-                platform=row["platform"], target_key=row["target_key"], destination=row["destination"],
+                platform=row["platform"], target_key=row["target_key"], target_name=row["target_name"],
+                destination=row["destination"],
                 message_thread_id=row["message_thread_id"],
                 text=row["text"], entities=json.loads(row["entities_json"]),
                 media_paths=[item["path"] for item in media], attempts=row["attempts"],
