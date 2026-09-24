@@ -33,12 +33,6 @@ def queue_cancel_keyboard(post_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-def registration_link_keyboard(url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Зарегистрироваться", url=url)
-    ]])
-
-
 def reminder_choice_keyboard(post_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Да, напомнить", callback_data=f"reminder:{post_id}:1")],
@@ -48,9 +42,20 @@ def reminder_choice_keyboard(post_id: int) -> InlineKeyboardMarkup:
 
 def user_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Записаться на мероприятие", callback_data="available_events"
+        )],
         [InlineKeyboardButton(text="Мои мероприятия", callback_data="my_events")],
         [InlineKeyboardButton(text="Изменить имя", callback_data="edit_profile")],
     ])
+
+
+def event_registration_keyboard(post_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="Зарегистрироваться", callback_data=f"register_event:{post_id}"
+        )
+    ]])
 
 
 def profile_keyboard() -> InlineKeyboardMarkup:

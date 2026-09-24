@@ -35,13 +35,13 @@ class TelegramPublisherTests(unittest.TestCase):
         result = await TelegramPublisher(bot).publish(delivery)
         self.assertEqual(result, "77")
         bot.send_message.assert_awaited_once_with(
-            -100123, "Тест", entities=None, message_thread_id=42, reply_markup=None
+            -100123, "Тест", entities=None, message_thread_id=42
         )
 
-    def test_registration_link_is_attached(self):
-        asyncio.run(self._registration_link_is_attached())
+    def test_registration_link_is_appended_to_regular_text(self):
+        asyncio.run(self._registration_link_is_appended_to_regular_text())
 
-    async def _registration_link_is_attached(self):
+    async def _registration_link_is_appended_to_regular_text(self):
         bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=78)))
         delivery = Delivery(
             id=1,
@@ -60,11 +60,42 @@ class TelegramPublisherTests(unittest.TestCase):
         )
         url = "https://t.me/example_bot?start=event_2"
         await TelegramPublisher(bot).publish(delivery, url)
-        markup = bot.send_message.await_args.kwargs["reply_markup"]
-        self.assertEqual(markup.inline_keyboard[0][0].url, url)
+        call = bot.send_message.await_args
+        self.assertEqual(call.args[1], f"Мероприятие\n\nРегистрация: {url}")
+        self.assertNotIn("reply_markup", call.kwargs)
 
     def test_rich_message_is_sent_with_registration_link(self):
         asyncio.run(self._rich_message_is_sent_with_registration_link())
+
+    def test_registration_link_is_appended_to_photo_caption(self):
+        asyncio.run(self._registration_link_is_appended_to_photo_caption())
+
+    async def _registration_link_is_appended_to_photo_caption(self):
+        bot = SimpleNamespace(
+            send_photo=AsyncMock(return_value=SimpleNamespace(message_id=80))
+        )
+        delivery = Delivery(
+            id=1,
+            post_id=2,
+            creator_id=3,
+            target_key="channel",
+            target_name="Канал",
+            destination="-100123",
+            message_thread_id=None,
+            text="Мероприятие",
+            entities=[],
+            rich_message=None,
+            media_paths=["photo.jpg"],
+            attempts=0,
+            event_enabled=True,
+        )
+        url = "https://t.me/example_bot?start=event_2"
+
+        await TelegramPublisher(bot).publish(delivery, url)
+
+        call = bot.send_photo.await_args
+        self.assertEqual(call.kwargs["caption"], f"Мероприятие\n\nРегистрация: {url}")
+        self.assertNotIn("reply_markup", call.kwargs)
 
     async def _rich_message_is_sent_with_registration_link(self):
         bot = SimpleNamespace(
@@ -100,8 +131,12 @@ class TelegramPublisherTests(unittest.TestCase):
         call = bot.send_rich_message.await_args
         self.assertEqual(call.args[0], -100123)
         self.assertEqual(call.args[1].blocks[0].type, "heading")
+        registration_block = call.args[1].blocks[-1]
+        self.assertEqual(registration_block.type, "buttons")
+        self.assertEqual(registration_block.buttons[0].url, url)
+        self.assertEqual(registration_block.buttons[0].text, "Зарегистрироваться")
         self.assertEqual(call.kwargs["message_thread_id"], 42)
-        self.assertEqual(call.kwargs["reply_markup"].inline_keyboard[0][0].url, url)
+        self.assertNotIn("reply_markup", call.kwargs)
 
 
 if __name__ == "__main__":

@@ -54,5 +54,18 @@ class FormattingTests(unittest.TestCase):
             "Лекция\nこんにちは\n26 сентября, 16:30",
         )
 
+    def test_registration_button_is_added_to_rich_message(self):
+        url = "https://t.me/example_bot?start=event_2"
+        outgoing = rich_message_from_json(
+            {"blocks": [{"type": "paragraph", "text": "Мероприятие"}]},
+            url,
+        )
+
+        button_block = outgoing.blocks[-1]
+        self.assertEqual(button_block.type, "buttons")
+        self.assertEqual(button_block.buttons[0].url, url)
+        self.assertEqual(button_block.buttons[0].style, "primary")
+        self.assertIsNone(button_block.align)
+
 if __name__ == "__main__":
     unittest.main()

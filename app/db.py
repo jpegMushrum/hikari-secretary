@@ -475,6 +475,27 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
+    async def available_events(self, user_id: int) -> list[dict]:
+        now = utc_now().isoformat()
+        async with self.connect() as db:
+            rows = await (await db.execute(
+                """SELECT e.post_id,e.starts_at,e.ends_at,p.text
+                   FROM events e JOIN posts p ON p.id=e.post_id
+                   WHERE e.status='active' AND e.starts_at>?
+                     AND EXISTS (
+                         SELECT 1 FROM deliveries d
+                         WHERE d.post_id=e.post_id AND d.status='sent'
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM registrations r
+                         WHERE r.post_id=e.post_id AND r.user_id=?
+                           AND r.status='registered'
+                     )
+                   ORDER BY e.starts_at""",
+                (now, user_id),
+            )).fetchall()
+            return [dict(row) for row in rows]
+
     async def registration(self, user_id: int, post_id: int) -> dict | None:
         async with self.connect() as db:
             row = await (await db.execute(

@@ -111,6 +111,8 @@ class DatabaseTests(unittest.TestCase):
             delivery = await db.claim_due()
             self.assertTrue(delivery.event_enabled)
             await db.delivery_succeeded(delivery.id, "10")
+            available = await db.available_events(200)
+            self.assertEqual([row["post_id"] for row in available], [post_id])
 
             await db.begin_registration_flow(200, post_id, "surname")
             await db.update_registration_flow(200, "given_name", "Иванов")
@@ -120,6 +122,7 @@ class DatabaseTests(unittest.TestCase):
             await db.update_registration_flow(200, "reminder")
             self.assertTrue(await db.register(200, post_id, True))
             await db.delete_registration_flow(200)
+            self.assertEqual(await db.available_events(200), [])
 
             registrations = await db.user_registrations(200)
             self.assertEqual(len(registrations), 1)
@@ -140,6 +143,8 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(participants[0]["surname"], "Петров")
             self.assertTrue(await db.cancel_registration(200, post_id))
             self.assertEqual(await db.user_registrations(200), [])
+            available = await db.available_events(200)
+            self.assertEqual([row["post_id"] for row in available], [post_id])
             participants = await db.event_registrations(post_id)
             self.assertEqual(participants[0]["status"], "cancelled")
 

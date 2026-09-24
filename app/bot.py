@@ -28,6 +28,7 @@ from .keyboards import (
     attendance_keyboard,
     confirm_event_cancellation_keyboard,
     draft_keyboard,
+    event_registration_keyboard,
     past_events_keyboard,
     profile_keyboard,
     queue_cancel_keyboard,
@@ -118,6 +119,12 @@ class SecretaryBot:
         self.router.callback_query.register(self.ask_schedule, F.data.startswith("schedule:"))
         self.router.callback_query.register(self.cancel, F.data.startswith("cancel:"))
         self.router.callback_query.register(self.choose_reminder, F.data.startswith("reminder:"))
+        self.router.callback_query.register(
+            self.show_available_events, F.data == "available_events"
+        )
+        self.router.callback_query.register(
+            self.register_from_menu, F.data.startswith("register_event:")
+        )
         self.router.callback_query.register(self.show_my_events, F.data == "my_events")
         self.router.callback_query.register(self.edit_profile, F.data == "edit_profile")
         self.router.callback_query.register(self.unregister, F.data.startswith("unregister:"))
@@ -142,7 +149,9 @@ class SecretaryBot:
             return
         payload = (message.text or "").partition(" ")[2].strip()
         if payload.startswith("event_") and payload[6:].isdigit():
-            await self._begin_user_registration(message, int(payload[6:]))
+            await self._begin_user_registration(
+                message.from_user.id, message.answer, int(payload[6:])
+            )
             return
         if not self._is_admin(message.from_user.id):
             await message.answer(
@@ -195,6 +204,36 @@ class SecretaryBot:
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
         await self._send_user_events(callback.from_user.id, callback.message.answer)
+        await callback.answer()
+
+    async def show_available_events(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        rows = await self.db.available_events(callback.from_user.id)
+        if not rows:
+            await callback.message.answer(
+                "Сейчас нет доступных мероприятий, на которые вы ещё не зарегистрированы."
+            )
+        else:
+            await callback.message.answer("Доступные мероприятия:")
+            for row in rows[:30]:
+                await callback.message.answer(
+                    f"{self._post_title(row['text'])}\n"
+                    f"Начало: {format_local(row['starts_at'], self.settings.timezone)} "
+                    f"({self.settings.timezone_name})",
+                    reply_markup=event_registration_keyboard(row["post_id"]),
+                )
+        await callback.answer()
+
+    async def register_from_menu(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        post_id = int(callback.data.split(":")[1])
+        await self._begin_user_registration(
+            callback.from_user.id, callback.message.answer, post_id
+        )
         await callback.answer()
 
     async def profile(self, message: Message) -> None:
@@ -591,34 +630,34 @@ class SecretaryBot:
         )
         await callback.answer()
 
-    async def _begin_user_registration(self, message: Message, post_id: int) -> None:
-        if await self.db.profile_edit_flow(message.from_user.id):
-            await message.answer(
+    async def _begin_user_registration(self, user_id: int, send, post_id: int) -> None:
+        if await self.db.profile_edit_flow(user_id):
+            await send(
                 "Сначала завершите изменение фамилии и имени, затем снова нажмите «Зарегистрироваться»."
             )
             return
         event = await self.db.event_for_registration(post_id)
         if not event:
-            await message.answer("Регистрация на это мероприятие недоступна.")
+            await send("Регистрация на это мероприятие недоступна.")
             return
-        current = await self.db.registration(message.from_user.id, post_id)
+        current = await self.db.registration(user_id, post_id)
         if current and current["status"] == "registered":
-            await message.answer(
+            await send(
                 f"Вы уже зарегистрированы: {self._post_title(event['text'])}.",
                 reply_markup=registration_cancel_keyboard(post_id),
             )
             return
-        profile = await self.db.profile(message.from_user.id)
+        profile = await self.db.profile(user_id)
         if profile:
-            await self.db.begin_registration_flow(message.from_user.id, post_id, "reminder")
-            await message.answer(
+            await self.db.begin_registration_flow(user_id, post_id, "reminder")
+            await send(
                 f"Вы регистрируетесь на мероприятие: {self._post_title(event['text'])}.\n"
                 f"{self._reminder_question()}",
                 reply_markup=reminder_choice_keyboard(post_id),
             )
             return
-        await self.db.begin_registration_flow(message.from_user.id, post_id, "surname")
-        await message.answer(
+        await self.db.begin_registration_flow(user_id, post_id, "surname")
+        await send(
             "Вы регистрируетесь впервые. Эти данные увидят только администраторы.\n\n"
             "Укажите вашу фамилию."
         )

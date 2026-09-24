@@ -23,8 +23,25 @@ def rich_message_to_json(message: RichMessage | None) -> dict | None:
     return message.model_dump(mode="json", exclude_none=True)
 
 
-def rich_message_from_json(item: dict) -> InputRichMessage:
-    return InputRichMessage.model_validate(_convert_rich_media(item))
+def rich_message_from_json(
+    item: dict, registration_url: str | None = None
+) -> InputRichMessage:
+    converted = _convert_rich_media(item)
+    if registration_url:
+        converted["blocks"] = [
+            *converted.get("blocks", []),
+            {
+                "type": "buttons",
+                "buttons": [
+                    {
+                        "text": "Зарегистрироваться",
+                        "url": registration_url,
+                        "style": "primary",
+                    }
+                ],
+            },
+        ]
+    return InputRichMessage.model_validate(converted)
 
 
 def _convert_rich_media(value):
