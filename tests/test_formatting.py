@@ -2,7 +2,14 @@ import unittest
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from app.formatting import parse_schedule
+from aiogram.types import RichMessage
+
+from app.formatting import (
+    parse_schedule,
+    rich_message_from_json,
+    rich_message_preview,
+    rich_message_to_json,
+)
 
 
 class FormattingTests(unittest.TestCase):
@@ -21,6 +28,31 @@ class FormattingTests(unittest.TestCase):
     def test_past_time_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_schedule("21.09.2026 15:30", self.tz, self.now)
+
+    def test_rich_message_round_trip_and_preview(self):
+        incoming = RichMessage.model_validate(
+            {
+                "blocks": [
+                    {
+                        "type": "heading",
+                        "text": {"type": "bold", "text": "Лекция"},
+                        "size": 2,
+                    },
+                    {"type": "paragraph", "text": "こんにちは"},
+                    {"type": "divider"},
+                    {"type": "footer", "text": "26 сентября, 16:30"},
+                ]
+            }
+        )
+        stored = rich_message_to_json(incoming)
+        outgoing = rich_message_from_json(stored)
+
+        self.assertEqual(len(outgoing.blocks), 4)
+        self.assertEqual(outgoing.blocks[0].type, "heading")
+        self.assertEqual(
+            rich_message_preview(stored),
+            "Лекция\nこんにちは\n26 сентября, 16:30",
+        )
 
 if __name__ == "__main__":
     unittest.main()

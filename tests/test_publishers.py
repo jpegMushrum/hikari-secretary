@@ -28,6 +28,7 @@ class TelegramPublisherTests(unittest.TestCase):
             message_thread_id=42,
             text="Тест",
             entities=[],
+            rich_message=None,
             media_paths=[],
             attempts=0,
         )
@@ -52,6 +53,7 @@ class TelegramPublisherTests(unittest.TestCase):
             message_thread_id=None,
             text="Мероприятие",
             entities=[],
+            rich_message=None,
             media_paths=[],
             attempts=0,
             event_enabled=True,
@@ -60,6 +62,46 @@ class TelegramPublisherTests(unittest.TestCase):
         await TelegramPublisher(bot).publish(delivery, url)
         markup = bot.send_message.await_args.kwargs["reply_markup"]
         self.assertEqual(markup.inline_keyboard[0][0].url, url)
+
+    def test_rich_message_is_sent_with_registration_link(self):
+        asyncio.run(self._rich_message_is_sent_with_registration_link())
+
+    async def _rich_message_is_sent_with_registration_link(self):
+        bot = SimpleNamespace(
+            send_rich_message=AsyncMock(return_value=SimpleNamespace(message_id=79))
+        )
+        delivery = Delivery(
+            id=1,
+            post_id=2,
+            creator_id=3,
+            target_key="chat",
+            target_name="Чат",
+            destination="-100123",
+            message_thread_id=42,
+            text="Лекция\nこんにちは",
+            entities=[],
+            rich_message={
+                "blocks": [
+                    {
+                        "type": "heading",
+                        "text": {"type": "bold", "text": "Лекция"},
+                        "size": 2,
+                    },
+                    {"type": "paragraph", "text": "こんにちは"},
+                ]
+            },
+            media_paths=[],
+            attempts=0,
+            event_enabled=True,
+        )
+        url = "https://t.me/example_bot?start=event_2"
+        result = await TelegramPublisher(bot).publish(delivery, url)
+        self.assertEqual(result, "79")
+        call = bot.send_rich_message.await_args
+        self.assertEqual(call.args[0], -100123)
+        self.assertEqual(call.args[1].blocks[0].type, "heading")
+        self.assertEqual(call.kwargs["message_thread_id"], 42)
+        self.assertEqual(call.kwargs["reply_markup"].inline_keyboard[0][0].url, url)
 
 
 if __name__ == "__main__":

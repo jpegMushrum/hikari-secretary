@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import Bot
 from aiogram.types import FSInputFile, InputMediaPhoto
 
 from .db import Delivery
-from .formatting import entities_from_json
+from .formatting import entities_from_json, rich_message_from_json
 from .keyboards import registration_link_keyboard
+
+
+log = logging.getLogger(__name__)
 
 
 class TelegramPublisher:
@@ -19,10 +24,42 @@ class TelegramPublisher:
         last_id = 0
         thread = delivery.message_thread_id
         markup = registration_link_keyboard(registration_url) if registration_url else None
+        log.info(
+            "Telegram publish started: delivery_id=%s post_id=%s target=%s destination=%s "
+            "thread_id=%s text_len=%s media_count=%s entities=%s registration=%s",
+            delivery.id,
+            delivery.post_id,
+            delivery.target_key,
+            delivery.destination,
+            thread,
+            len(delivery.text),
+            len(paths),
+            [str(entity.type) for entity in entities],
+            registration_url is not None,
+        )
+        if delivery.rich_message:
+            rich_message = rich_message_from_json(delivery.rich_message)
+            message = await self.bot.send_rich_message(
+                chat_id,
+                rich_message,
+                message_thread_id=thread,
+                reply_markup=markup,
+            )
+            log.info(
+                "Telegram publish completed: delivery_id=%s message_id=%s mode=rich_message",
+                delivery.id,
+                message.message_id,
+            )
+            return str(message.message_id)
         if not paths:
             message = await self.bot.send_message(
                 chat_id, delivery.text, entities=entities or None,
                 message_thread_id=thread, reply_markup=markup,
+            )
+            log.info(
+                "Telegram publish completed: delivery_id=%s message_id=%s mode=text",
+                delivery.id,
+                message.message_id,
             )
             return str(message.message_id)
 
@@ -33,6 +70,11 @@ class TelegramPublisher:
                     caption_entities=entities or None, message_thread_id=thread,
                     reply_markup=markup,
                 )
+                log.info(
+                    "Telegram publish completed: delivery_id=%s message_id=%s mode=photo",
+                    delivery.id,
+                    message.message_id,
+                )
                 return str(message.message_id)
             text_message = await self.bot.send_message(
                 chat_id, delivery.text, entities=entities or None,
@@ -41,7 +83,13 @@ class TelegramPublisher:
             photo_message = await self.bot.send_photo(
                 chat_id, FSInputFile(paths[0]), message_thread_id=thread,
             )
-            return str(photo_message.message_id or text_message.message_id)
+            result_id = photo_message.message_id or text_message.message_id
+            log.info(
+                "Telegram publish completed: delivery_id=%s message_id=%s mode=text_and_photo",
+                delivery.id,
+                result_id,
+            )
+            return str(result_id)
 
         if delivery.text:
             message = await self.bot.send_message(
@@ -58,4 +106,9 @@ class TelegramPublisher:
                 message_thread_id=thread, reply_markup=markup,
             )
             last_id = prompt.message_id
+        log.info(
+            "Telegram publish completed: delivery_id=%s message_id=%s mode=album",
+            delivery.id,
+            last_id,
+        )
         return str(last_id)

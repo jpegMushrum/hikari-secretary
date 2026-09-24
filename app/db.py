@@ -24,6 +24,7 @@ class Delivery:
     message_thread_id: int | None
     text: str
     entities: list[dict]
+    rich_message: dict | None
     media_paths: list[str]
     attempts: int
     event_enabled: bool = False
@@ -53,6 +54,7 @@ class Database:
                     creator_id INTEGER NOT NULL,
                     text TEXT NOT NULL DEFAULT '',
                     entities_json TEXT NOT NULL DEFAULT '[]',
+                    rich_message_json TEXT,
                     status TEXT NOT NULL DEFAULT 'draft',
                     scheduled_at TEXT,
                     created_at TEXT NOT NULL,
@@ -135,6 +137,12 @@ class Database:
             }
             if "message_thread_id" not in columns:
                 await db.execute("ALTER TABLE deliveries ADD COLUMN message_thread_id INTEGER")
+            post_columns = {
+                row["name"]
+                for row in await (await db.execute("PRAGMA table_info(posts)")).fetchall()
+            }
+            if "rich_message_json" not in post_columns:
+                await db.execute("ALTER TABLE posts ADD COLUMN rich_message_json TEXT")
             event_columns = {
                 row["name"]
                 for row in await (await db.execute("PRAGMA table_info(events)")).fetchall()
@@ -167,11 +175,26 @@ class Database:
             )
             await db.commit()
 
-    async def create_post(self, creator_id: int, text: str, entities: list[dict], media_paths: list[str]) -> int:
+    async def create_post(
+        self,
+        creator_id: int,
+        text: str,
+        entities: list[dict],
+        media_paths: list[str],
+        rich_message: dict | None = None,
+    ) -> int:
         async with self.connect() as db:
             cursor = await db.execute(
-                "INSERT INTO posts(creator_id,text,entities_json,created_at) VALUES(?,?,?,?)",
-                (creator_id, text, json.dumps(entities, ensure_ascii=False), utc_now().isoformat()),
+                """INSERT INTO posts(
+                       creator_id,text,entities_json,rich_message_json,created_at
+                   ) VALUES(?,?,?,?,?)""",
+                (
+                    creator_id,
+                    text,
+                    json.dumps(entities, ensure_ascii=False),
+                    json.dumps(rich_message, ensure_ascii=False) if rich_message else None,
+                    utc_now().isoformat(),
+                ),
             )
             post_id = int(cursor.lastrowid)
             await db.executemany(
@@ -191,6 +214,10 @@ class Database:
             event = await (await db.execute("SELECT * FROM events WHERE post_id=?", (post_id,))).fetchone()
             return dict(post) | {
                 "entities": json.loads(post["entities_json"]),
+                "rich_message": (
+                    json.loads(post["rich_message_json"])
+                    if post["rich_message_json"] else None
+                ),
                 "media_paths": [row["path"] for row in media],
                 "deliveries": [dict(row) for row in deliveries],
                 "event": dict(event) if event else None,
@@ -300,7 +327,7 @@ class Database:
             row = await (await db.execute(
                 """SELECT d.id,d.post_id,d.target_key,d.target_name,d.destination,
                           d.message_thread_id,d.attempts,
-                          p.creator_id,p.text,p.entities_json,
+                          p.creator_id,p.text,p.entities_json,p.rich_message_json,
                           EXISTS(SELECT 1 FROM events e WHERE e.post_id=p.id) AS event_enabled
                    FROM deliveries d JOIN posts p ON p.id=d.post_id
                    WHERE p.status='scheduled' AND d.status IN ('pending','retry')
@@ -329,6 +356,10 @@ class Database:
                 destination=row["destination"],
                 message_thread_id=row["message_thread_id"],
                 text=row["text"], entities=json.loads(row["entities_json"]),
+                rich_message=(
+                    json.loads(row["rich_message_json"])
+                    if row["rich_message_json"] else None
+                ),
                 media_paths=[item["path"] for item in media], attempts=row["attempts"],
                 event_enabled=bool(row["event_enabled"]),
             )

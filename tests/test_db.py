@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,42 @@ from app.db import Database
 
 
 class DatabaseTests(unittest.TestCase):
+    def test_existing_database_gets_rich_message_column(self):
+        asyncio.run(self._existing_database_gets_rich_message_column())
+
+    async def _existing_database_gets_rich_message_column(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """CREATE TABLE posts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        creator_id INTEGER NOT NULL,
+                        text TEXT NOT NULL DEFAULT '',
+                        entities_json TEXT NOT NULL DEFAULT '[]',
+                        status TEXT NOT NULL DEFAULT 'draft',
+                        scheduled_at TEXT,
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        notified INTEGER NOT NULL DEFAULT 0
+                    )"""
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            db = Database(path)
+            await db.initialize()
+            async with db.connect() as connection:
+                columns = {
+                    row["name"]
+                    for row in await (
+                        await connection.execute("PRAGMA table_info(posts)")
+                    ).fetchall()
+                }
+            self.assertIn("rich_message_json", columns)
+
     def test_delivery_lifecycle(self):
         asyncio.run(self._delivery_lifecycle())
 
@@ -36,6 +73,30 @@ class DatabaseTests(unittest.TestCase):
 
     def test_event_registration_lifecycle(self):
         asyncio.run(self._event_registration_lifecycle())
+
+    def test_rich_message_is_preserved_for_delivery(self):
+        asyncio.run(self._rich_message_is_preserved_for_delivery())
+
+    async def _rich_message_is_preserved_for_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "test.sqlite3")
+            await db.initialize()
+            rich_message = {
+                "blocks": [
+                    {"type": "heading", "text": "Лекция", "size": 2},
+                    {"type": "paragraph", "text": "こんにちは"},
+                ]
+            }
+            post_id = await db.create_post(
+                100, "Лекция\nこんにちは", [], [], rich_message
+            )
+            post = await db.post(post_id)
+            self.assertEqual(post["rich_message"], rich_message)
+
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            await db.schedule(post_id, datetime.now(timezone.utc))
+            delivery = await db.claim_due()
+            self.assertEqual(delivery.rich_message, rich_message)
 
     async def _event_registration_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:

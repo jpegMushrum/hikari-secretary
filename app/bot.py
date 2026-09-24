@@ -15,7 +15,14 @@ from aiogram.types import CallbackQuery, Message
 
 from .config import Settings
 from .db import Database, Delivery
-from .formatting import entities_to_json, format_local, parse_schedule
+from .formatting import (
+    entities_to_json,
+    format_local,
+    parse_schedule,
+    rich_message_from_json,
+    rich_message_preview,
+    rich_message_to_json,
+)
 from .keyboards import (
     admin_event_keyboard,
     attendance_keyboard,
@@ -28,6 +35,7 @@ from .keyboards import (
     reminder_choice_keyboard,
     user_menu_keyboard,
 )
+from .logging_middleware import UpdateLoggingMiddleware
 from .publishers import TelegramPublisher
 
 log = logging.getLogger(__name__)
@@ -56,6 +64,7 @@ class SecretaryBot:
         self.awaiting_schedule: dict[int, int] = {}
         self.awaiting_event: dict[int, EventSetup] = {}
         self.bot_username: str | None = None
+        self.dp.update.outer_middleware(UpdateLoggingMiddleware())
         self._register_handlers()
         self.dp.include_router(self.router)
 
@@ -64,8 +73,20 @@ class SecretaryBot:
 
     async def _guard_message(self, message: Message) -> bool:
         if not self._is_admin(message.from_user.id if message.from_user else None):
+            log.info(
+                "Admin message ignored: reason=not_admin user_id=%s chat_id=%s content_type=%s",
+                message.from_user.id if message.from_user else None,
+                message.chat.id,
+                message.content_type,
+            )
             return False
         if message.chat.type != "private":
+            log.info(
+                "Admin message ignored: reason=not_private user_id=%s chat_id=%s chat_type=%s",
+                message.from_user.id if message.from_user else None,
+                message.chat.id,
+                message.chat.type,
+            )
             return False
         return True
 
@@ -75,6 +96,11 @@ class SecretaryBot:
             or not callback.message
             or callback.message.chat.type != "private"
         ):
+            log.info(
+                "Admin callback rejected: user_id=%s data=%r",
+                callback.from_user.id,
+                callback.data,
+            )
             await callback.answer("Доступ запрещён", show_alert=True)
             return False
         return True
@@ -107,7 +133,9 @@ class SecretaryBot:
         self.router.callback_query.register(
             self.dismiss_cancel_event, F.data == "dismiss_cancel_event"
         )
-        self.router.message.register(self.content, F.content_type.in_({"text", "photo"}))
+        self.router.message.register(
+            self.content, F.content_type.in_({"text", "photo", "rich_message"})
+        )
 
     async def start(self, message: Message) -> None:
         if not message.from_user or message.chat.type != "private":
@@ -135,7 +163,8 @@ class SecretaryBot:
         if not await self._guard_message(message):
             return
         await message.answer(
-            "Поддерживаются текст, ссылки и изображения. Оформление Telegram сохраняется. "
+            "Поддерживаются текст, ссылки, изображения и Rich Messages. "
+            "Оформление Telegram сохраняется. "
             "К публикации можно добавить регистрацию на мероприятие. "
             "Время вводится в формате ДД.ММ.ГГГГ ЧЧ:ММ "
             f"({self.settings.timezone_name})."
@@ -329,19 +358,41 @@ class SecretaryBot:
 
     async def content(self, message: Message) -> None:
         if not message.from_user or message.chat.type != "private":
+            log.info(
+                "Content ignored: reason=not_private_or_no_user chat_id=%s content_type=%s",
+                message.chat.id,
+                message.content_type,
+            )
             return
         flow = await self.db.registration_flow(message.from_user.id)
         if flow and message.text:
+            log.info(
+                "Registration form input: user_id=%s post_id=%s stage=%s",
+                message.from_user.id,
+                flow["post_id"],
+                flow["stage"],
+            )
             await self._continue_profile(message, flow)
             return
         profile_flow = await self.db.profile_edit_flow(message.from_user.id)
         if profile_flow and message.text:
+            log.info(
+                "Profile edit input: user_id=%s stage=%s",
+                message.from_user.id,
+                profile_flow["stage"],
+            )
             await self._continue_profile_edit(message, profile_flow)
             return
         if not await self._guard_message(message):
             return
         event_setup = self.awaiting_event.get(message.from_user.id)
         if event_setup and message.text:
+            log.info(
+                "Event time input: admin_id=%s post_id=%s stage=%s",
+                message.from_user.id,
+                event_setup.post_id,
+                "start" if event_setup.starts_at is None else "end",
+            )
             try:
                 value = parse_schedule(message.text, self.settings.timezone)
             except ValueError as exc:
@@ -368,6 +419,11 @@ class SecretaryBot:
             return
         if message.from_user.id in self.awaiting_schedule and message.text:
             post_id = self.awaiting_schedule[message.from_user.id]
+            log.info(
+                "Post schedule input: admin_id=%s post_id=%s",
+                message.from_user.id,
+                post_id,
+            )
             try:
                 when = parse_schedule(message.text, self.settings.timezone)
             except ValueError as exc:
@@ -394,6 +450,12 @@ class SecretaryBot:
             key = (message.chat.id, message.media_group_id)
             album = self.albums.setdefault(key, Album())
             album.messages.append(message)
+            log.info(
+                "Album item buffered: admin_id=%s media_group_id=%s items=%s",
+                message.from_user.id,
+                message.media_group_id,
+                len(album.messages),
+            )
             if album.task:
                 album.task.cancel()
             album.task = asyncio.create_task(self._finish_album(key))
@@ -418,11 +480,35 @@ class SecretaryBot:
         return str(path)
 
     async def _create_draft(self, messages: list[Message]) -> None:
-        lead = next((item for item in messages if item.caption or item.text), messages[0])
-        text = lead.text or lead.caption or ""
-        entities = entities_to_json(lead.entities or lead.caption_entities)
+        lead = next(
+            (
+                item for item in messages
+                if item.caption or item.text or item.rich_message
+            ),
+            messages[0],
+        )
+        rich_message = rich_message_to_json(lead.rich_message)
+        text = (
+            rich_message_preview(rich_message)
+            if rich_message else (lead.text or lead.caption or "")
+        )
+        entities = [] if rich_message else entities_to_json(
+            lead.entities or lead.caption_entities
+        )
         media_paths = [await self._download_photo(item) for item in messages if item.photo]
-        post_id = await self.db.create_post(lead.from_user.id, text, entities, media_paths)
+        post_id = await self.db.create_post(
+            lead.from_user.id, text, entities, media_paths, rich_message
+        )
+        log.info(
+            "Draft created: post_id=%s admin_id=%s text_len=%s media_count=%s "
+            "entities=%s rich_message=%s",
+            post_id,
+            lead.from_user.id,
+            len(text),
+            len(media_paths),
+            [item.get("type") for item in entities],
+            rich_message is not None,
+        )
         await self._show_draft(lead.chat.id, post_id)
 
     async def _show_draft(self, chat_id: int, post_id: int, edit: Message | None = None) -> None:
@@ -437,16 +523,30 @@ class SecretaryBot:
             )
         else:
             event_status = "выключена"
-        body = (
-            f"Черновик #{post_id}\n\n{text_preview}\n\n"
-            f"Изображений: {len(post['media_paths'])}\n"
-            f"Регистрация: {event_status}\n"
-            "Выберите цели публикации."
-        )
+        if post["rich_message"]:
+            body = (
+                f"Настройки поста #{post_id}\n\n"
+                "Формат: Rich Message\n"
+                f"Регистрация: {event_status}\n"
+                "Выберите цели публикации."
+            )
+        else:
+            body = (
+                f"Черновик #{post_id}\n\n{text_preview}\n\n"
+                f"Изображений: {len(post['media_paths'])}\n"
+                "Формат: обычный\n"
+                f"Регистрация: {event_status}\n"
+                "Выберите цели публикации."
+            )
         markup = draft_keyboard(post_id, selected, self.settings, bool(post["event"]))
         if edit:
             await edit.edit_text(body, reply_markup=markup)
         else:
+            if post["rich_message"]:
+                await self.bot.send_rich_message(
+                    chat_id,
+                    rich_message_from_json(post["rich_message"]),
+                )
             await self.bot.send_message(chat_id, body, reply_markup=markup)
 
     async def toggle_target(self, callback: CallbackQuery) -> None:
@@ -666,6 +766,13 @@ class SecretaryBot:
             try:
                 delivery = await self.db.claim_due()
                 if delivery:
+                    log.info(
+                        "Delivery claimed: delivery_id=%s post_id=%s target=%s attempt=%s",
+                        delivery.id,
+                        delivery.post_id,
+                        delivery.target_key,
+                        delivery.attempts + 1,
+                    )
                     try:
                         registration_url = None
                         if delivery.event_enabled and self.bot_username:
@@ -674,6 +781,12 @@ class SecretaryBot:
                             )
                         external_id = await telegram.publish(delivery, registration_url)
                         await self.db.delivery_succeeded(delivery.id, external_id)
+                        log.info(
+                            "Delivery succeeded: delivery_id=%s post_id=%s external_id=%s",
+                            delivery.id,
+                            delivery.post_id,
+                            external_id,
+                        )
                         await self._notify_admin(
                             delivery.creator_id,
                             f"✅ Публикация #{delivery.post_id}: «{delivery.target_name}» — опубликовано.",
@@ -699,9 +812,12 @@ class SecretaryBot:
                                 f"Причина: {reason}",
                             )
                     continue
-                for reminder in await self.db.due_reminders(
+                reminders = await self.db.due_reminders(
                     self.settings.event_reminder_hours
-                ):
+                )
+                if reminders:
+                    log.info("Due event reminders found: count=%s", len(reminders))
+                for reminder in reminders:
                     try:
                         await self.bot.send_message(
                             reminder["user_id"],
@@ -713,13 +829,29 @@ class SecretaryBot:
                         await self.db.mark_reminder_sent(
                             reminder["user_id"], reminder["post_id"]
                         )
+                        log.info(
+                            "Event reminder sent: post_id=%s user_id=%s",
+                            reminder["post_id"],
+                            reminder["user_id"],
+                        )
                     except TelegramForbiddenError:
+                        log.warning(
+                            "Event reminder skipped: reason=bot_blocked post_id=%s user_id=%s",
+                            reminder["post_id"],
+                            reminder["user_id"],
+                        )
                         await self.db.mark_reminder_sent(
                             reminder["user_id"], reminder["post_id"]
                         )
                     except Exception:
                         log.exception("Could not send event reminder")
-                for attendance in await self.db.due_attendance_prompts():
+                attendance_prompts = await self.db.due_attendance_prompts()
+                if attendance_prompts:
+                    log.info(
+                        "Due attendance prompts found: count=%s",
+                        len(attendance_prompts),
+                    )
+                for attendance in attendance_prompts:
                     try:
                         await self.bot.send_message(
                             attendance["user_id"],
@@ -729,7 +861,17 @@ class SecretaryBot:
                         await self.db.mark_attendance_prompt_sent(
                             attendance["user_id"], attendance["post_id"]
                         )
+                        log.info(
+                            "Attendance prompt sent: post_id=%s user_id=%s",
+                            attendance["post_id"],
+                            attendance["user_id"],
+                        )
                     except TelegramForbiddenError:
+                        log.warning(
+                            "Attendance prompt skipped: reason=bot_blocked post_id=%s user_id=%s",
+                            attendance["post_id"],
+                            attendance["user_id"],
+                        )
                         await self.db.mark_attendance_prompt_sent(
                             attendance["user_id"], attendance["post_id"]
                         )
@@ -793,9 +935,16 @@ class SecretaryBot:
         return raw[:700]
 
     async def run(self) -> None:
+        log.info("Initializing database: path=%s", self.settings.database_path)
         await self.db.initialize()
         me = await self.bot.get_me()
         self.bot_username = me.username
+        log.info(
+            "Bot initialized: id=%s username=@%s targets=%s",
+            me.id,
+            me.username,
+            len(self.settings.targets),
+        )
         scheduler_task = asyncio.create_task(self.scheduler())
         try:
             await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
