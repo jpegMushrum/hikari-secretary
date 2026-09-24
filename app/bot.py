@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
@@ -16,9 +15,9 @@ from aiogram.types import CallbackQuery, Message
 
 from .config import Settings
 from .db import Database, Delivery
-from .formatting import entities_to_json, format_local, formatting_loss, parse_schedule
+from .formatting import entities_to_json, format_local, parse_schedule
 from .keyboards import draft_keyboard, queue_cancel_keyboard
-from .publishers import TelegramPublisher, VKPublisher
+from .publishers import TelegramPublisher
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +37,6 @@ class SecretaryBot:
         self.db = Database(settings.database_path)
         self.albums: dict[tuple[int, str], Album] = {}
         self.awaiting_schedule: dict[int, int] = {}
-        self.session: aiohttp.ClientSession | None = None
         self._register_handlers()
         self.dp.include_router(self.router)
 
@@ -80,8 +78,8 @@ class SecretaryBot:
         if not await self._guard_message(message):
             return
         await message.answer(
-            "Поддерживаются текст, ссылки и изображения. Оформляйте текст средствами Telegram — оно сохранится в Telegram, "
-            "а для VK будет отправлен чистый текст со ссылками. Время вводится в формате ДД.ММ.ГГГГ ЧЧ:ММ "
+            "Поддерживаются текст, ссылки и изображения. Оформление Telegram сохраняется. "
+            "Время вводится в формате ДД.ММ.ГГГГ ЧЧ:ММ "
             f"({self.settings.timezone_name})."
         )
 
@@ -157,11 +155,10 @@ class SecretaryBot:
     async def _show_draft(self, chat_id: int, post_id: int, edit: Message | None = None) -> None:
         post = await self.db.post(post_id)
         selected = {item["target_key"] for item in post["deliveries"]}
-        warning = "\n\n⚠ Оформление будет упрощено в VK." if formatting_loss(post["entities"]) else ""
         text_preview = post["text"][:500] or "[без текста]"
         body = (
             f"Черновик #{post_id}\n\n{text_preview}\n\n"
-            f"Изображений: {len(post['media_paths'])}\nВыберите цели публикации.{warning}"
+            f"Изображений: {len(post['media_paths'])}\nВыберите цели публикации."
         )
         markup = draft_keyboard(post_id, selected, self.settings)
         if edit:
@@ -181,7 +178,6 @@ class SecretaryBot:
         target = self.settings.targets[index]
         await self.db.toggle_delivery(
             post_id,
-            target.platform,
             target.key,
             target.name,
             target.destination,
@@ -228,14 +224,12 @@ class SecretaryBot:
 
     async def scheduler(self) -> None:
         telegram = TelegramPublisher(self.bot)
-        vk = VKPublisher(self.settings.vk_access_token, self.settings.vk_api_version, self.session)
         while True:
             try:
                 delivery = await self.db.claim_due()
                 if delivery:
                     try:
-                        publisher = telegram if delivery.platform == "telegram" else vk
-                        external_id = await publisher.publish(delivery)
+                        external_id = await telegram.publish(delivery)
                         await self.db.delivery_succeeded(delivery.id, external_id)
                         await self._notify_admin(
                             delivery.creator_id,
@@ -310,12 +304,10 @@ class SecretaryBot:
 
     async def run(self) -> None:
         await self.db.initialize()
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120))
         scheduler_task = asyncio.create_task(self.scheduler())
         try:
             await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
         finally:
             scheduler_task.cancel()
             await asyncio.gather(scheduler_task, return_exceptions=True)
-            await self.session.close()
             await self.bot.session.close()

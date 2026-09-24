@@ -7,19 +7,6 @@ from zoneinfo import ZoneInfo
 from aiogram.types import MessageEntity
 
 
-STYLE_ENTITY_TYPES = {
-    "bold",
-    "italic",
-    "underline",
-    "strikethrough",
-    "spoiler",
-    "code",
-    "pre",
-    "blockquote",
-    "expandable_blockquote",
-}
-
-
 def entities_to_json(entities: Iterable[MessageEntity] | None) -> list[dict]:
     if not entities:
         return []
@@ -28,32 +15,6 @@ def entities_to_json(entities: Iterable[MessageEntity] | None) -> list[dict]:
 
 def entities_from_json(items: list[dict]) -> list[MessageEntity]:
     return [MessageEntity.model_validate(item) for item in items]
-
-
-def formatting_loss(items: list[dict]) -> bool:
-    return any(str(item.get("type")) in STYLE_ENTITY_TYPES for item in items)
-
-
-def _utf16_offset_to_index(text: str, offset: int) -> int:
-    """Convert Telegram's UTF-16 entity offset to a Python string index."""
-    return len(text.encode("utf-16-le")[: offset * 2].decode("utf-16-le"))
-
-
-def render_vk_text(text: str, entities: list[dict]) -> str:
-    """Preserve Telegram text-link destinations in VK's plain-text post body."""
-    insertions: list[tuple[int, str]] = []
-    for entity in entities:
-        if str(entity.get("type")) != "text_link" or not entity.get("url"):
-            continue
-        start = _utf16_offset_to_index(text, int(entity["offset"]))
-        end = _utf16_offset_to_index(text, int(entity["offset"]) + int(entity["length"]))
-        url = str(entity["url"])
-        if text[start:end].strip() != url:
-            insertions.append((end, f" ({url})"))
-    result = text
-    for index, addition in sorted(insertions, reverse=True):
-        result = result[:index] + addition + result[index:]
-    return result
 
 
 def parse_schedule(value: str, local_tz: ZoneInfo, now: datetime | None = None) -> datetime:

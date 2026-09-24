@@ -1,6 +1,6 @@
 import unittest
 
-from app.resolve_ids import normalize_telegram_reference, normalize_vk_reference
+from app.resolve_ids import normalize_telegram_reference
 
 
 class ResolveIdsTests(unittest.TestCase):
@@ -16,13 +16,6 @@ class ResolveIdsTests(unittest.TestCase):
     def test_private_invite_is_rejected(self):
         with self.assertRaises(ValueError):
             normalize_telegram_reference("https://t.me/+secret-code")
-
-    def test_vk_link(self):
-        self.assertEqual(normalize_vk_reference("https://vk.com/example_public"), "example_public")
-
-    def test_vk_tag(self):
-        self.assertEqual(normalize_vk_reference("@example_public"), "example_public")
-
 
 if __name__ == "__main__":
     unittest.main()

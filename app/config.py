@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 @dataclass(frozen=True, slots=True)
 class Target:
     index: int
-    platform: str
     key: str
     name: str
     destination: str
@@ -22,8 +21,6 @@ class Target:
 class Settings:
     telegram_bot_token: str
     admin_ids: frozenset[int]
-    vk_access_token: str
-    vk_api_version: str
     timezone: ZoneInfo
     timezone_name: str
     database_path: Path
@@ -50,26 +47,24 @@ def _load_targets(path: Path) -> tuple[Target, ...]:
 
     targets: list[Target] = []
     keys: set[str] = set()
-    for platform in ("telegram", "vk"):
-        for item in raw.get(platform, []):
-            key = str(item.get("key", "")).strip()
-            name = str(item.get("name", "")).strip()
-            field = "chat_id" if platform == "telegram" else "group_id"
-            destination = str(item.get(field, "")).strip()
-            if not key or not name or not destination:
-                raise ValueError(f"У цели {platform} обязательны key, name и {field}")
-            if key in keys:
-                raise ValueError(f"Ключ цели должен быть уникальным: {key}")
-            keys.add(key)
-            thread_id: int | None = None
-            if platform == "telegram" and item.get("message_thread_id") is not None:
-                try:
-                    thread_id = int(item["message_thread_id"])
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"message_thread_id цели {key} должен быть числом") from exc
-                if thread_id <= 0:
-                    raise ValueError(f"message_thread_id цели {key} должен быть положительным")
-            targets.append(Target(len(targets), platform, key, name, destination, thread_id))
+    for item in raw.get("telegram", []):
+        key = str(item.get("key", "")).strip()
+        name = str(item.get("name", "")).strip()
+        destination = str(item.get("chat_id", "")).strip()
+        if not key or not name or not destination:
+            raise ValueError("У цели Telegram обязательны key, name и chat_id")
+        if key in keys:
+            raise ValueError(f"Ключ цели должен быть уникальным: {key}")
+        keys.add(key)
+        thread_id: int | None = None
+        if item.get("message_thread_id") is not None:
+            try:
+                thread_id = int(item["message_thread_id"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"message_thread_id цели {key} должен быть числом") from exc
+            if thread_id <= 0:
+                raise ValueError(f"message_thread_id цели {key} должен быть положительным")
+        targets.append(Target(len(targets), key, name, destination, thread_id))
     if not targets:
         raise ValueError("В targets.json не задано ни одной цели")
     return tuple(targets)
@@ -99,8 +94,6 @@ def load_settings() -> Settings:
     return Settings(
         telegram_bot_token=_required("TELEGRAM_BOT_TOKEN"),
         admin_ids=admin_ids,
-        vk_access_token=_required("VK_ACCESS_TOKEN"),
-        vk_api_version=os.getenv("VK_API_VERSION", "5.199").strip(),
         timezone=timezone,
         timezone_name=timezone_name,
         database_path=database_path,

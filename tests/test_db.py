@@ -16,7 +16,7 @@ class DatabaseTests(unittest.TestCase):
             db = Database(Path(directory) / "test.sqlite3")
             await db.initialize()
             post_id = await db.create_post(100, "Тест", [], [])
-            await db.toggle_delivery(post_id, "telegram", "channel", "Канал", "-100123", 42)
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123", 42)
             scheduled = await db.schedule(post_id, datetime.now(timezone.utc))
             self.assertTrue(scheduled)
 

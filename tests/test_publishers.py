@@ -22,7 +22,6 @@ class TelegramPublisherTests(unittest.TestCase):
             id=1,
             post_id=2,
             creator_id=3,
-            platform="telegram",
             target_key="topic",
             target_name="Топик",
             destination="-100123",

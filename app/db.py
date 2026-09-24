@@ -18,7 +18,6 @@ class Delivery:
     id: int
     post_id: int
     creator_id: int
-    platform: str
     target_key: str
     target_name: str
     destination: str
@@ -95,6 +94,22 @@ class Database:
                 "UPDATE deliveries SET status='retry', next_attempt_at=? WHERE status='publishing'",
                 (utc_now().isoformat(),),
             )
+            await db.execute(
+                """UPDATE deliveries
+                   SET status='failed', next_attempt_at=NULL,
+                       last_error='Платформа больше не поддерживается'
+                   WHERE platform<>'telegram' AND status IN ('pending','retry','publishing')"""
+            )
+            await db.execute(
+                """UPDATE posts SET status='failed', completed_at=?
+                   WHERE status='scheduled'
+                     AND EXISTS (SELECT 1 FROM deliveries d WHERE d.post_id=posts.id)
+                     AND NOT EXISTS (
+                         SELECT 1 FROM deliveries d
+                         WHERE d.post_id=posts.id AND d.status NOT IN ('sent','failed')
+                     )""",
+                (utc_now().isoformat(),),
+            )
             await db.commit()
 
     async def create_post(self, creator_id: int, text: str, entities: list[dict], media_paths: list[str]) -> int:
@@ -127,7 +142,6 @@ class Database:
     async def toggle_delivery(
         self,
         post_id: int,
-        platform: str,
         target_key: str,
         target_name: str,
         destination: str,
@@ -144,13 +158,16 @@ class Database:
                     """INSERT INTO deliveries(
                            post_id,platform,target_key,target_name,destination,message_thread_id
                        ) VALUES(?,?,?,?,?,?)""",
-                    (post_id, platform, target_key, target_name, destination, message_thread_id),
+                    (post_id, "telegram", target_key, target_name, destination, message_thread_id),
                 )
             await db.commit()
 
     async def schedule(self, post_id: int, when: datetime) -> bool:
         async with self.connect() as db:
-            count = await (await db.execute("SELECT COUNT(*) AS n FROM deliveries WHERE post_id=?", (post_id,))).fetchone()
+            count = await (await db.execute(
+                "SELECT COUNT(*) AS n FROM deliveries WHERE post_id=? AND platform='telegram'",
+                (post_id,),
+            )).fetchone()
             if not count or count["n"] == 0:
                 return False
             cursor = await db.execute(
@@ -158,7 +175,7 @@ class Database:
                 (when.astimezone(timezone.utc).isoformat(), post_id),
             )
             await db.execute(
-                "UPDATE deliveries SET next_attempt_at=? WHERE post_id=?",
+                "UPDATE deliveries SET next_attempt_at=? WHERE post_id=? AND platform='telegram'",
                 (when.astimezone(timezone.utc).isoformat(), post_id),
             )
             await db.commit()
@@ -195,6 +212,7 @@ class Database:
                           p.creator_id,p.text,p.entities_json
                    FROM deliveries d JOIN posts p ON p.id=d.post_id
                    WHERE p.status='scheduled' AND d.status IN ('pending','retry')
+                     AND d.platform='telegram'
                      AND p.scheduled_at<=? AND d.next_attempt_at<=?
                    ORDER BY d.next_attempt_at,d.id LIMIT 1""",
                 (now, now),
@@ -215,7 +233,7 @@ class Database:
             await db.commit()
             return Delivery(
                 id=row["id"], post_id=row["post_id"], creator_id=row["creator_id"],
-                platform=row["platform"], target_key=row["target_key"], target_name=row["target_name"],
+                target_key=row["target_key"], target_name=row["target_name"],
                 destination=row["destination"],
                 message_thread_id=row["message_thread_id"],
                 text=row["text"], entities=json.loads(row["entities_json"]),
