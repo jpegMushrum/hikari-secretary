@@ -36,7 +36,7 @@ def rich_message_from_json(
                     {
                         "text": "Зарегистрироваться",
                         "url": registration_url,
-                        "style": "primary",
+                        "style": "success",
                     }
                 ],
             },

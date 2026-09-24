@@ -64,7 +64,7 @@ class FormattingTests(unittest.TestCase):
         button_block = outgoing.blocks[-1]
         self.assertEqual(button_block.type, "buttons")
         self.assertEqual(button_block.buttons[0].url, url)
-        self.assertEqual(button_block.buttons[0].style, "primary")
+        self.assertEqual(button_block.buttons[0].style, "success")
         self.assertIsNone(button_block.align)
 
 if __name__ == "__main__":
