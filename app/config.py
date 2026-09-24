@@ -28,6 +28,7 @@ class Settings:
     targets: tuple[Target, ...]
     scheduler_interval_seconds: int
     max_delivery_attempts: int
+    event_reminder_hours: int
 
 
 def _required(name: str) -> str:
@@ -101,4 +102,5 @@ def load_settings() -> Settings:
         targets=_load_targets(targets_path),
         scheduler_interval_seconds=max(1, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "5"))),
         max_delivery_attempts=max(1, int(os.getenv("MAX_DELIVERY_ATTEMPTS", "5"))),
+        event_reminder_hours=max(1, int(os.getenv("EVENT_REMINDER_HOURS", "24"))),
     )

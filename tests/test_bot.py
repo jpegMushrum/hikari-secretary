@@ -7,7 +7,9 @@ from app.bot import SecretaryBot
 
 def make_bot(*admin_ids: int) -> SecretaryBot:
     bot = object.__new__(SecretaryBot)
-    bot.settings = SimpleNamespace(admin_ids=frozenset(admin_ids))
+    bot.settings = SimpleNamespace(
+        admin_ids=frozenset(admin_ids), event_reminder_hours=2
+    )
     return bot
 
 
@@ -47,3 +49,9 @@ def test_admin_private_message_is_allowed() -> None:
 
     assert allowed is True
     message.answer.assert_not_awaited()
+
+
+def test_reminder_question_uses_configured_hours() -> None:
+    bot = make_bot(1)
+
+    assert bot._reminder_question() == "Напомнить вам о мероприятии за 2 ч. до начала?"

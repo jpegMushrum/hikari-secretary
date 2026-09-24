@@ -34,8 +34,32 @@ class TelegramPublisherTests(unittest.TestCase):
         result = await TelegramPublisher(bot).publish(delivery)
         self.assertEqual(result, "77")
         bot.send_message.assert_awaited_once_with(
-            -100123, "Тест", entities=None, message_thread_id=42
+            -100123, "Тест", entities=None, message_thread_id=42, reply_markup=None
         )
+
+    def test_registration_link_is_attached(self):
+        asyncio.run(self._registration_link_is_attached())
+
+    async def _registration_link_is_attached(self):
+        bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=78)))
+        delivery = Delivery(
+            id=1,
+            post_id=2,
+            creator_id=3,
+            target_key="chat",
+            target_name="Чат",
+            destination="-100123",
+            message_thread_id=None,
+            text="Мероприятие",
+            entities=[],
+            media_paths=[],
+            attempts=0,
+            event_enabled=True,
+        )
+        url = "https://t.me/example_bot?start=event_2"
+        await TelegramPublisher(bot).publish(delivery, url)
+        markup = bot.send_message.await_args.kwargs["reply_markup"]
+        self.assertEqual(markup.inline_keyboard[0][0].url, url)
 
 
 if __name__ == "__main__":

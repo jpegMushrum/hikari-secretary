@@ -1,7 +1,7 @@
 import asyncio
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db import Database
@@ -33,6 +33,114 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(notifications[0]["deliveries"][0]["status"], "sent")
             await db.mark_notified(post_id)
             self.assertEqual(await db.terminal_notifications(), [])
+
+    def test_event_registration_lifecycle(self):
+        asyncio.run(self._event_registration_lifecycle())
+
+    async def _event_registration_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "test.sqlite3")
+            await db.initialize()
+            post_id = await db.create_post(100, "Японский разговорный клуб", [], [])
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            starts_at = datetime.now(timezone.utc) + timedelta(hours=12)
+            ends_at = starts_at + timedelta(hours=2)
+            self.assertTrue(await db.set_event(post_id, starts_at, ends_at))
+            self.assertTrue(await db.schedule(post_id, datetime.now(timezone.utc)))
+            delivery = await db.claim_due()
+            self.assertTrue(delivery.event_enabled)
+            await db.delivery_succeeded(delivery.id, "10")
+
+            await db.begin_registration_flow(200, post_id, "surname")
+            await db.update_registration_flow(200, "given_name", "Иванов")
+            flow = await db.registration_flow(200)
+            self.assertEqual(flow["surname"], "Иванов")
+            await db.save_profile(200, "Иванов", "Иван")
+            await db.update_registration_flow(200, "reminder")
+            self.assertTrue(await db.register(200, post_id, True))
+            await db.delete_registration_flow(200)
+
+            registrations = await db.user_registrations(200)
+            self.assertEqual(len(registrations), 1)
+            self.assertEqual(await db.due_reminders(2), [])
+            self.assertEqual(len(await db.due_reminders()), 1)
+            await db.mark_reminder_sent(200, post_id)
+            self.assertEqual(await db.due_reminders(), [])
+
+            await db.begin_profile_edit(200)
+            await db.update_profile_edit(200, "given_name", "Петров")
+            edit_flow = await db.profile_edit_flow(200)
+            self.assertEqual(edit_flow["surname"], "Петров")
+            await db.save_profile(200, "Петров", "Иван")
+            await db.delete_profile_edit(200)
+            self.assertIsNone(await db.profile_edit_flow(200))
+
+            participants = await db.event_registrations(post_id)
+            self.assertEqual(participants[0]["surname"], "Петров")
+            self.assertTrue(await db.cancel_registration(200, post_id))
+            self.assertEqual(await db.user_registrations(200), [])
+            participants = await db.event_registrations(post_id)
+            self.assertEqual(participants[0]["status"], "cancelled")
+
+    def test_attendance_is_requested_only_for_active_registration(self):
+        asyncio.run(self._attendance_is_requested_only_for_active_registration())
+
+    async def _attendance_is_requested_only_for_active_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "test.sqlite3")
+            await db.initialize()
+            post_id = await db.create_post(100, "Встреча", [], [])
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            starts_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+            ends_at = starts_at + timedelta(hours=1)
+            await db.set_event(post_id, starts_at, ends_at)
+            await db.schedule(post_id, datetime.now(timezone.utc))
+            delivery = await db.claim_due()
+            await db.delivery_succeeded(delivery.id, "11")
+            await db.save_profile(201, "Петрова", "Анна")
+            self.assertTrue(await db.register(201, post_id, False))
+
+            async with db.connect() as connection:
+                await connection.execute(
+                    "UPDATE events SET ends_at=? WHERE post_id=?",
+                    ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), post_id),
+                )
+                await connection.commit()
+
+            prompts = await db.due_attendance_prompts()
+            self.assertEqual(len(prompts), 1)
+            self.assertEqual(len(await db.admin_events(past=True)), 1)
+            self.assertEqual(await db.admin_events(), [])
+            await db.mark_attendance_prompt_sent(201, post_id)
+            self.assertTrue(await db.record_attendance(201, post_id, True))
+            participants = await db.event_registrations(post_id)
+            self.assertEqual(participants[0]["attended"], 1)
+
+    def test_cancelled_event_stops_notifications(self):
+        asyncio.run(self._cancelled_event_stops_notifications())
+
+    async def _cancelled_event_stops_notifications(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(Path(directory) / "test.sqlite3")
+            await db.initialize()
+            post_id = await db.create_post(100, "Отменяемая встреча", [], [])
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            starts_at = datetime.now(timezone.utc) + timedelta(hours=2)
+            await db.set_event(post_id, starts_at, starts_at + timedelta(hours=1))
+            await db.schedule(post_id, datetime.now(timezone.utc))
+            delivery = await db.claim_due()
+            await db.delivery_succeeded(delivery.id, "12")
+            await db.save_profile(202, "Сидоров", "Пётр")
+            await db.register(202, post_id, True)
+            self.assertEqual(len(await db.admin_events()), 1)
+
+            participants = await db.cancel_event(post_id)
+            self.assertEqual(participants[0]["user_id"], 202)
+            self.assertEqual(await db.due_reminders(3), [])
+            self.assertEqual(await db.user_registrations(202), [])
+            self.assertEqual(await db.admin_events(), [])
+            self.assertEqual(await db.admin_events(past=True), [])
+            self.assertIsNone(await db.cancel_event(post_id))
 
 
 if __name__ == "__main__":

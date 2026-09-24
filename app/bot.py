@@ -16,7 +16,18 @@ from aiogram.types import CallbackQuery, Message
 from .config import Settings
 from .db import Database, Delivery
 from .formatting import entities_to_json, format_local, parse_schedule
-from .keyboards import draft_keyboard, queue_cancel_keyboard
+from .keyboards import (
+    admin_event_keyboard,
+    attendance_keyboard,
+    confirm_event_cancellation_keyboard,
+    draft_keyboard,
+    past_events_keyboard,
+    profile_keyboard,
+    queue_cancel_keyboard,
+    registration_cancel_keyboard,
+    reminder_choice_keyboard,
+    user_menu_keyboard,
+)
 from .publishers import TelegramPublisher
 
 log = logging.getLogger(__name__)
@@ -28,6 +39,12 @@ class Album:
     task: asyncio.Task | None = None
 
 
+@dataclass(slots=True)
+class EventSetup:
+    post_id: int
+    starts_at: datetime | None = None
+
+
 class SecretaryBot:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -37,6 +54,8 @@ class SecretaryBot:
         self.db = Database(settings.database_path)
         self.albums: dict[tuple[int, str], Album] = {}
         self.awaiting_schedule: dict[int, int] = {}
+        self.awaiting_event: dict[int, EventSetup] = {}
+        self.bot_username: str | None = None
         self._register_handlers()
         self.dp.include_router(self.router)
 
@@ -51,7 +70,11 @@ class SecretaryBot:
         return True
 
     async def _guard_callback(self, callback: CallbackQuery) -> bool:
-        if not self._is_admin(callback.from_user.id):
+        if (
+            not self._is_admin(callback.from_user.id)
+            or not callback.message
+            or callback.message.chat.type != "private"
+        ):
             await callback.answer("Доступ запрещён", show_alert=True)
             return False
         return True
@@ -60,18 +83,52 @@ class SecretaryBot:
         self.router.message.register(self.start, CommandStart())
         self.router.message.register(self.help, Command("help"))
         self.router.message.register(self.queue, Command("queue"))
+        self.router.message.register(self.my_events, Command("events"))
+        self.router.message.register(self.profile, Command("profile"))
+        self.router.message.register(self.admin_registrations, Command("registrations"))
         self.router.callback_query.register(self.toggle_target, F.data.startswith("target:"))
+        self.router.callback_query.register(self.toggle_event, F.data.startswith("event:"))
         self.router.callback_query.register(self.publish_now, F.data.startswith("now:"))
         self.router.callback_query.register(self.ask_schedule, F.data.startswith("schedule:"))
         self.router.callback_query.register(self.cancel, F.data.startswith("cancel:"))
+        self.router.callback_query.register(self.choose_reminder, F.data.startswith("reminder:"))
+        self.router.callback_query.register(self.show_my_events, F.data == "my_events")
+        self.router.callback_query.register(self.edit_profile, F.data == "edit_profile")
+        self.router.callback_query.register(self.unregister, F.data.startswith("unregister:"))
+        self.router.callback_query.register(self.record_attendance, F.data.startswith("attendance:"))
+        self.router.callback_query.register(self.show_participants, F.data.startswith("participants:"))
+        self.router.callback_query.register(self.show_past_events, F.data == "past_events")
+        self.router.callback_query.register(
+            self.ask_cancel_event, F.data.startswith("cancel_event:")
+        )
+        self.router.callback_query.register(
+            self.confirm_cancel_event, F.data.startswith("confirm_cancel_event:")
+        )
+        self.router.callback_query.register(
+            self.dismiss_cancel_event, F.data == "dismiss_cancel_event"
+        )
         self.router.message.register(self.content, F.content_type.in_({"text", "photo"}))
 
     async def start(self, message: Message) -> None:
-        if not await self._guard_message(message):
+        if not message.from_user or message.chat.type != "private":
+            return
+        payload = (message.text or "").partition(" ")[2].strip()
+        if payload.startswith("event_") and payload[6:].isdigit():
+            await self._begin_user_registration(message, int(payload[6:]))
+            return
+        if not self._is_admin(message.from_user.id):
+            await message.answer(
+                "Здесь можно зарегистрироваться на мероприятие и управлять своими регистрациями.",
+                reply_markup=user_menu_keyboard(),
+            )
             return
         await message.answer(
-            "Отправьте текст, фотографию с подписью или альбом. Затем выберите площадки и время публикации.\n\n"
-            "/queue — запланированные публикации\n/help — помощь"
+            "Отправьте текст, фотографию с подписью или альбом. Затем выберите цели и время публикации.\n\n"
+            "/queue — запланированные публикации\n"
+            "/registrations — мероприятия и участники\n"
+            "/events — мои личные регистрации\n"
+            "/profile — изменить фамилию и имя\n"
+            "/help — помощь"
         )
 
     async def help(self, message: Message) -> None:
@@ -79,6 +136,7 @@ class SecretaryBot:
             return
         await message.answer(
             "Поддерживаются текст, ссылки и изображения. Оформление Telegram сохраняется. "
+            "К публикации можно добавить регистрацию на мероприятие. "
             "Время вводится в формате ДД.ММ.ГГГГ ЧЧ:ММ "
             f"({self.settings.timezone_name})."
         )
@@ -98,8 +156,215 @@ class SecretaryBot:
                 reply_markup=queue_cancel_keyboard(row["id"]),
             )
 
-    async def content(self, message: Message) -> None:
+    async def my_events(self, message: Message) -> None:
+        if not message.from_user or message.chat.type != "private":
+            return
+        await self._send_user_events(message.from_user.id, message.answer)
+
+    async def show_my_events(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        await self._send_user_events(callback.from_user.id, callback.message.answer)
+        await callback.answer()
+
+    async def profile(self, message: Message) -> None:
+        if not message.from_user or message.chat.type != "private":
+            return
+        profile = await self.db.profile(message.from_user.id)
+        if not profile:
+            await message.answer(
+                "Профиль появится после вашей первой регистрации на мероприятие."
+            )
+            return
+        await message.answer(
+            f"Ваши данные: {profile['surname']} {profile['given_name']}",
+            reply_markup=profile_keyboard(),
+        )
+
+    async def edit_profile(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        profile = await self.db.profile(callback.from_user.id)
+        if not profile:
+            await callback.answer(
+                "Профиль появится после первой регистрации", show_alert=True
+            )
+            return
+        if await self.db.registration_flow(callback.from_user.id):
+            await callback.answer(
+                "Сначала завершите текущую регистрацию", show_alert=True
+            )
+            return
+        await self.db.begin_profile_edit(callback.from_user.id)
+        await callback.message.answer(
+            f"Сейчас указано: {profile['surname']} {profile['given_name']}.\n"
+            "Введите новую фамилию."
+        )
+        await callback.answer()
+
+    async def _send_user_events(self, user_id: int, send) -> None:
+        rows = await self.db.user_registrations(user_id)
+        if not rows:
+            await send("У вас пока нет активных регистраций.")
+            return
+        for row in rows:
+            title = self._post_title(row["text"])
+            starts = format_local(row["starts_at"], self.settings.timezone)
+            reminder = "включено" if row["reminders_enabled"] else "выключено"
+            await send(
+                f"{title}\nНачало: {starts} ({self.settings.timezone_name})\n"
+                f"Напоминание: {reminder}",
+                reply_markup=registration_cancel_keyboard(row["post_id"]),
+            )
+
+    async def admin_registrations(self, message: Message) -> None:
         if not await self._guard_message(message):
+            return
+        rows = await self.db.admin_events()
+        if not rows:
+            await message.answer(
+                "Активных мероприятий пока нет.",
+                reply_markup=past_events_keyboard(),
+            )
+            return
+        for row in rows[:30]:
+            await message.answer(
+                f"Мероприятие #{row['post_id']}: {self._post_title(row['text'])}\n"
+                f"Начало: {format_local(row['starts_at'], self.settings.timezone)}\n"
+                f"Зарегистрировано: {row['registrations']}",
+                reply_markup=admin_event_keyboard(row["post_id"]),
+            )
+        await message.answer(
+            "Архив мероприятий:", reply_markup=past_events_keyboard()
+        )
+
+    async def show_past_events(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        rows = await self.db.admin_events(past=True)
+        if not rows:
+            await callback.message.answer("Прошедших мероприятий пока нет.")
+        else:
+            for row in rows[:30]:
+                await callback.message.answer(
+                    f"Прошедшее мероприятие #{row['post_id']}: "
+                    f"{self._post_title(row['text'])}\n"
+                    f"Начало: {format_local(row['starts_at'], self.settings.timezone)}\n"
+                    f"Зарегистрировано: {row['registrations']}",
+                    reply_markup=admin_event_keyboard(
+                        row["post_id"], can_cancel=False
+                    ),
+                )
+        await callback.answer()
+
+    async def show_participants(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        post_id = int(callback.data.split(":")[1])
+        rows = await self.db.event_registrations(post_id)
+        if not rows:
+            await callback.message.answer("На это мероприятие пока никто не зарегистрирован.")
+        else:
+            lines = [f"Участники мероприятия #{post_id}:"]
+            for index, row in enumerate(rows, 1):
+                attendance = " — отменил(а) регистрацию" if row["status"] == "cancelled" else ""
+                if row["status"] == "registered" and row["attended"] is not None:
+                    attendance = " — был(а)" if row["attended"] else " — не был(а)"
+                reminder = " 🔔" if row["reminders_enabled"] else ""
+                lines.append(
+                    f"{index}. {row['surname']} {row['given_name']} "
+                    f"(ID {row['user_id']}){reminder}{attendance}"
+                )
+            for offset in range(0, len(lines), 40):
+                await callback.message.answer("\n".join(lines[offset:offset + 40]))
+        await callback.answer()
+
+    async def ask_cancel_event(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        post_id = int(callback.data.split(":")[1])
+        await callback.message.answer(
+            f"Отменить мероприятие #{post_id}? Зарегистрированные участники получат уведомление.",
+            reply_markup=confirm_event_cancellation_keyboard(post_id),
+        )
+        await callback.answer()
+
+    async def dismiss_cancel_event(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        await callback.message.edit_text("Отмена мероприятия не выполнена.")
+        await callback.answer()
+
+    async def confirm_cancel_event(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        post_id = int(callback.data.split(":")[1])
+        participants = await self.db.cancel_event(post_id)
+        if participants is None:
+            await callback.answer(
+                "Мероприятие уже отменено или завершилось", show_alert=True
+            )
+            return
+        title = self._post_title(participants[0]["text"]) if participants else f"#{post_id}"
+        notified = 0
+        for participant in participants:
+            try:
+                await self.bot.send_message(
+                    participant["user_id"],
+                    f"Мероприятие «{title}» отменено организаторами.",
+                )
+                notified += 1
+            except Exception:
+                log.exception(
+                    "Could not notify user %s about cancelled event %s",
+                    participant["user_id"], post_id,
+                )
+        await callback.message.edit_text(
+            f"Мероприятие #{post_id} отменено. Уведомлено участников: "
+            f"{notified} из {len(participants)}."
+        )
+        await callback.answer()
+
+    async def content(self, message: Message) -> None:
+        if not message.from_user or message.chat.type != "private":
+            return
+        flow = await self.db.registration_flow(message.from_user.id)
+        if flow and message.text:
+            await self._continue_profile(message, flow)
+            return
+        profile_flow = await self.db.profile_edit_flow(message.from_user.id)
+        if profile_flow and message.text:
+            await self._continue_profile_edit(message, profile_flow)
+            return
+        if not await self._guard_message(message):
+            return
+        event_setup = self.awaiting_event.get(message.from_user.id)
+        if event_setup and message.text:
+            try:
+                value = parse_schedule(message.text, self.settings.timezone)
+            except ValueError as exc:
+                await message.answer(str(exc))
+                return
+            if event_setup.starts_at is None:
+                event_setup.starts_at = value
+                await message.answer(
+                    "Теперь введите дату и время окончания мероприятия в формате "
+                    f"ДД.ММ.ГГГГ ЧЧ:ММ ({self.settings.timezone_name})."
+                )
+                return
+            if value <= event_setup.starts_at:
+                await message.answer("Окончание должно быть позже начала мероприятия.")
+                return
+            if await self.db.set_event(event_setup.post_id, event_setup.starts_at, value):
+                post_id = event_setup.post_id
+                self.awaiting_event.pop(message.from_user.id, None)
+                await message.answer("Регистрация добавлена к публикации.")
+                await self._show_draft(message.chat.id, post_id)
+            else:
+                self.awaiting_event.pop(message.from_user.id, None)
+                await message.answer("Черновик уже закрыт.")
             return
         if message.from_user.id in self.awaiting_schedule and message.text:
             post_id = self.awaiting_schedule[message.from_user.id]
@@ -108,6 +373,14 @@ class SecretaryBot:
             except ValueError as exc:
                 await message.answer(str(exc))
                 return
+            post = await self.db.post(post_id)
+            if post and post["event"]:
+                starts_at = datetime.fromisoformat(post["event"]["starts_at"])
+                if when >= starts_at:
+                    await message.answer(
+                        "Публикация должна выйти раньше начала мероприятия."
+                    )
+                    return
             if await self.db.schedule(post_id, when):
                 self.awaiting_schedule.pop(message.from_user.id, None)
                 await message.answer(
@@ -156,11 +429,21 @@ class SecretaryBot:
         post = await self.db.post(post_id)
         selected = {item["target_key"] for item in post["deliveries"]}
         text_preview = post["text"][:500] or "[без текста]"
+        if post["event"]:
+            event_status = (
+                "включена\n"
+                f"Начало: {format_local(post['event']['starts_at'], self.settings.timezone)}\n"
+                f"Окончание: {format_local(post['event']['ends_at'], self.settings.timezone)}"
+            )
+        else:
+            event_status = "выключена"
         body = (
             f"Черновик #{post_id}\n\n{text_preview}\n\n"
-            f"Изображений: {len(post['media_paths'])}\nВыберите цели публикации."
+            f"Изображений: {len(post['media_paths'])}\n"
+            f"Регистрация: {event_status}\n"
+            "Выберите цели публикации."
         )
-        markup = draft_keyboard(post_id, selected, self.settings)
+        markup = draft_keyboard(post_id, selected, self.settings, bool(post["event"]))
         if edit:
             await edit.edit_text(body, reply_markup=markup)
         else:
@@ -186,11 +469,164 @@ class SecretaryBot:
         await self._show_draft(callback.message.chat.id, post_id, callback.message)
         await callback.answer()
 
+    async def toggle_event(self, callback: CallbackQuery) -> None:
+        if not await self._guard_callback(callback):
+            return
+        post_id = int(callback.data.split(":")[1])
+        post = await self.db.post(post_id)
+        if not post or post["status"] != "draft":
+            await callback.answer("Черновик уже закрыт", show_alert=True)
+            return
+        if post["event"]:
+            await self.db.remove_event(post_id)
+            self.awaiting_event.pop(callback.from_user.id, None)
+            await self._show_draft(callback.message.chat.id, post_id, callback.message)
+            await callback.answer("Регистрация отключена")
+            return
+        self.awaiting_schedule.pop(callback.from_user.id, None)
+        self.awaiting_event[callback.from_user.id] = EventSetup(post_id)
+        await callback.message.answer(
+            "Введите дату и время начала мероприятия в формате "
+            f"ДД.ММ.ГГГГ ЧЧ:ММ. Часовой пояс: {self.settings.timezone_name}."
+        )
+        await callback.answer()
+
+    async def _begin_user_registration(self, message: Message, post_id: int) -> None:
+        if await self.db.profile_edit_flow(message.from_user.id):
+            await message.answer(
+                "Сначала завершите изменение фамилии и имени, затем снова нажмите «Зарегистрироваться»."
+            )
+            return
+        event = await self.db.event_for_registration(post_id)
+        if not event:
+            await message.answer("Регистрация на это мероприятие недоступна.")
+            return
+        current = await self.db.registration(message.from_user.id, post_id)
+        if current and current["status"] == "registered":
+            await message.answer(
+                f"Вы уже зарегистрированы: {self._post_title(event['text'])}.",
+                reply_markup=registration_cancel_keyboard(post_id),
+            )
+            return
+        profile = await self.db.profile(message.from_user.id)
+        if profile:
+            await self.db.begin_registration_flow(message.from_user.id, post_id, "reminder")
+            await message.answer(
+                f"Вы регистрируетесь на мероприятие: {self._post_title(event['text'])}.\n"
+                f"{self._reminder_question()}",
+                reply_markup=reminder_choice_keyboard(post_id),
+            )
+            return
+        await self.db.begin_registration_flow(message.from_user.id, post_id, "surname")
+        await message.answer(
+            "Вы регистрируетесь впервые. Эти данные увидят только администраторы.\n\n"
+            "Укажите вашу фамилию."
+        )
+
+    async def _continue_profile(self, message: Message, flow: dict) -> None:
+        value = " ".join((message.text or "").strip().split())
+        if not 1 < len(value) <= 80:
+            await message.answer("Введите значение длиной от 2 до 80 символов.")
+            return
+        if flow["stage"] == "surname":
+            await self.db.update_registration_flow(
+                message.from_user.id, "given_name", surname=value
+            )
+            await message.answer("Теперь укажите ваше имя.")
+            return
+        if flow["stage"] == "given_name":
+            await self.db.save_profile(
+                message.from_user.id, flow["surname"], value
+            )
+            await self.db.update_registration_flow(message.from_user.id, "reminder")
+            await message.answer(
+                self._reminder_question(),
+                reply_markup=reminder_choice_keyboard(flow["post_id"]),
+            )
+
+    async def _continue_profile_edit(self, message: Message, flow: dict) -> None:
+        value = " ".join((message.text or "").strip().split())
+        if not 1 < len(value) <= 80:
+            await message.answer("Введите значение длиной от 2 до 80 символов.")
+            return
+        if flow["stage"] == "surname":
+            await self.db.update_profile_edit(
+                message.from_user.id, "given_name", surname=value
+            )
+            await message.answer("Теперь укажите новое имя.")
+            return
+        if flow["stage"] == "given_name":
+            await self.db.save_profile(
+                message.from_user.id, flow["surname"], value
+            )
+            await self.db.delete_profile_edit(message.from_user.id)
+            await message.answer(
+                f"Данные обновлены: {flow['surname']} {value}.",
+                reply_markup=user_menu_keyboard(),
+            )
+
+    async def choose_reminder(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        _, post_raw, enabled_raw = callback.data.split(":")
+        post_id = int(post_raw)
+        flow = await self.db.registration_flow(callback.from_user.id)
+        if not flow or flow["post_id"] != post_id or flow["stage"] != "reminder":
+            await callback.answer("Регистрация уже завершена или устарела", show_alert=True)
+            return
+        registered = await self.db.register(
+            callback.from_user.id, post_id, enabled_raw == "1"
+        )
+        await self.db.delete_registration_flow(callback.from_user.id)
+        if not registered:
+            await callback.message.edit_text("Регистрация на это мероприятие уже закрыта.")
+        else:
+            await callback.message.edit_text(
+                "Вы зарегистрированы. Мероприятие появилось в разделе «Мои мероприятия».",
+                reply_markup=registration_cancel_keyboard(post_id),
+            )
+        await callback.answer()
+
+    async def unregister(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        post_id = int(callback.data.split(":")[1])
+        if await self.db.cancel_registration(callback.from_user.id, post_id):
+            await callback.message.edit_text("Регистрация отменена.")
+            await callback.answer()
+        else:
+            await callback.answer(
+                "Регистрация уже отменена или мероприятие началось", show_alert=True
+            )
+
+    async def record_attendance(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        _, post_raw, attended_raw = callback.data.split(":")
+        if await self.db.record_attendance(
+            callback.from_user.id, int(post_raw), attended_raw == "1"
+        ):
+            answer = "Спасибо! Посещение отмечено."
+            await callback.message.edit_text(answer)
+            await callback.answer()
+        else:
+            await callback.answer("Ответ уже неактуален", show_alert=True)
+
     async def publish_now(self, callback: CallbackQuery) -> None:
         if not await self._guard_callback(callback):
             return
         post_id = int(callback.data.split(":")[1])
+        post = await self.db.post(post_id)
+        if post and post["event"]:
+            starts_at = datetime.fromisoformat(post["event"]["starts_at"])
+            if starts_at <= datetime.now(timezone.utc):
+                await callback.answer("Мероприятие уже началось", show_alert=True)
+                return
         if await self.db.schedule(post_id, datetime.now(timezone.utc)):
+            self.awaiting_event.pop(callback.from_user.id, None)
             await callback.message.edit_text(f"Публикация #{post_id} поставлена в очередь.")
         else:
             await callback.answer("Выберите хотя бы одну цель", show_alert=True)
@@ -203,6 +639,7 @@ class SecretaryBot:
         if not post or not post["deliveries"]:
             await callback.answer("Выберите хотя бы одну цель", show_alert=True)
             return
+        self.awaiting_event.pop(callback.from_user.id, None)
         self.awaiting_schedule[callback.from_user.id] = post_id
         await callback.message.answer(
             f"Введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ. Часовой пояс: {self.settings.timezone_name}."
@@ -214,6 +651,7 @@ class SecretaryBot:
             return
         post_id = int(callback.data.split(":")[1])
         self.awaiting_schedule.pop(callback.from_user.id, None)
+        self.awaiting_event.pop(callback.from_user.id, None)
         post = await self.db.post(post_id)
         if await self.db.cancel(post_id):
             if post:
@@ -229,7 +667,12 @@ class SecretaryBot:
                 delivery = await self.db.claim_due()
                 if delivery:
                     try:
-                        external_id = await telegram.publish(delivery)
+                        registration_url = None
+                        if delivery.event_enabled and self.bot_username:
+                            registration_url = (
+                                f"https://t.me/{self.bot_username}?start=event_{delivery.post_id}"
+                            )
+                        external_id = await telegram.publish(delivery, registration_url)
                         await self.db.delivery_succeeded(delivery.id, external_id)
                         await self._notify_admin(
                             delivery.creator_id,
@@ -256,6 +699,42 @@ class SecretaryBot:
                                 f"Причина: {reason}",
                             )
                     continue
+                for reminder in await self.db.due_reminders(
+                    self.settings.event_reminder_hours
+                ):
+                    try:
+                        await self.bot.send_message(
+                            reminder["user_id"],
+                            f"Напоминание: скоро начнётся мероприятие «{self._post_title(reminder['text'])}».\n"
+                            f"Начало: {format_local(reminder['starts_at'], self.settings.timezone)} "
+                            f"({self.settings.timezone_name}).",
+                            reply_markup=registration_cancel_keyboard(reminder["post_id"]),
+                        )
+                        await self.db.mark_reminder_sent(
+                            reminder["user_id"], reminder["post_id"]
+                        )
+                    except TelegramForbiddenError:
+                        await self.db.mark_reminder_sent(
+                            reminder["user_id"], reminder["post_id"]
+                        )
+                    except Exception:
+                        log.exception("Could not send event reminder")
+                for attendance in await self.db.due_attendance_prompts():
+                    try:
+                        await self.bot.send_message(
+                            attendance["user_id"],
+                            f"Вы посетили мероприятие «{self._post_title(attendance['text'])}»?",
+                            reply_markup=attendance_keyboard(attendance["post_id"]),
+                        )
+                        await self.db.mark_attendance_prompt_sent(
+                            attendance["user_id"], attendance["post_id"]
+                        )
+                    except TelegramForbiddenError:
+                        await self.db.mark_attendance_prompt_sent(
+                            attendance["user_id"], attendance["post_id"]
+                        )
+                    except Exception:
+                        log.exception("Could not send attendance prompt")
                 for notice in await self.db.terminal_notifications():
                     lines = [f"Публикация #{notice['id']}: {'завершена' if notice['status'] == 'sent' else 'завершена с ошибками' }."]
                     for item in notice["deliveries"]:
@@ -283,6 +762,17 @@ class SecretaryBot:
             except OSError:
                 log.warning("Could not remove media file %s", path, exc_info=True)
 
+    @staticmethod
+    def _post_title(text: str) -> str:
+        clean = " ".join(text.strip().split())
+        return (clean[:77] + "...") if len(clean) > 80 else (clean or "Без названия")
+
+    def _reminder_question(self) -> str:
+        return (
+            "Напомнить вам о мероприятии за "
+            f"{self.settings.event_reminder_hours} ч. до начала?"
+        )
+
     async def _notify_admin(self, admin_id: int, text: str) -> None:
         try:
             await self.bot.send_message(admin_id, text)
@@ -304,6 +794,8 @@ class SecretaryBot:
 
     async def run(self) -> None:
         await self.db.initialize()
+        me = await self.bot.get_me()
+        self.bot_username = me.username
         scheduler_task = asyncio.create_task(self.scheduler())
         try:
             await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
