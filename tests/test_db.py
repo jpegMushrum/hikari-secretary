@@ -6,13 +6,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db import Database
+from migrations.runner import migrate
+
+
+async def migrated_database(path: Path) -> Database:
+    migrate(path, create_backup=False)
+    db = Database(path)
+    await db.initialize()
+    return db
 
 
 class DatabaseTests(unittest.TestCase):
-    def test_existing_database_gets_rich_message_column(self):
-        asyncio.run(self._existing_database_gets_rich_message_column())
+    def test_existing_profiles_are_migrated_without_data_loss(self):
+        asyncio.run(self._existing_profiles_are_migrated_without_data_loss())
 
-    async def _existing_database_gets_rich_message_column(self):
+    async def _existing_profiles_are_migrated_without_data_loss(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.sqlite3"
             connection = sqlite3.connect(path)
@@ -30,12 +38,25 @@ class DatabaseTests(unittest.TestCase):
                         notified INTEGER NOT NULL DEFAULT 0
                     )"""
                 )
+                connection.execute(
+                    """CREATE TABLE user_profiles (
+                        user_id INTEGER PRIMARY KEY,
+                        surname TEXT NOT NULL,
+                        given_name TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                connection.execute(
+                    """INSERT INTO user_profiles(
+                        user_id,surname,given_name,created_at,updated_at
+                    ) VALUES(1,'Иванов','Иван','now','now')"""
+                )
                 connection.commit()
             finally:
                 connection.close()
 
-            db = Database(path)
-            await db.initialize()
+            db = await migrated_database(path)
             async with db.connect() as connection:
                 columns = {
                     row["name"]
@@ -44,14 +65,15 @@ class DatabaseTests(unittest.TestCase):
                     ).fetchall()
                 }
             self.assertIn("rich_message_json", columns)
+            profile = await db.profile(1)
+            self.assertEqual(profile["full_name"], "Иван Иванов")
 
     def test_delivery_lifecycle(self):
         asyncio.run(self._delivery_lifecycle())
 
     async def _delivery_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:
-            db = Database(Path(directory) / "test.sqlite3")
-            await db.initialize()
+            db = await migrated_database(Path(directory) / "test.sqlite3")
             post_id = await db.create_post(100, "Тест", [], [])
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123", 42)
             scheduled = await db.schedule(post_id, datetime.now(timezone.utc))
@@ -79,8 +101,7 @@ class DatabaseTests(unittest.TestCase):
 
     async def _rich_message_is_preserved_for_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
-            db = Database(Path(directory) / "test.sqlite3")
-            await db.initialize()
+            db = await migrated_database(Path(directory) / "test.sqlite3")
             rich_message = {
                 "blocks": [
                     {"type": "heading", "text": "Лекция", "size": 2},
@@ -100,8 +121,7 @@ class DatabaseTests(unittest.TestCase):
 
     async def _event_registration_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:
-            db = Database(Path(directory) / "test.sqlite3")
-            await db.initialize()
+            db = await migrated_database(Path(directory) / "test.sqlite3")
             post_id = await db.create_post(100, "Японский разговорный клуб", [], [])
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(hours=12)
@@ -114,11 +134,8 @@ class DatabaseTests(unittest.TestCase):
             available = await db.available_events(200)
             self.assertEqual([row["post_id"] for row in available], [post_id])
 
-            await db.begin_registration_flow(200, post_id, "surname")
-            await db.update_registration_flow(200, "given_name", "Иванов")
-            flow = await db.registration_flow(200)
-            self.assertEqual(flow["surname"], "Иванов")
-            await db.save_profile(200, "Иванов", "Иван")
+            await db.begin_registration_flow(200, post_id, "full_name")
+            await db.save_profile(200, "Иван Иванов", "ivan", "Ваня", None)
             await db.update_registration_flow(200, "reminder")
             self.assertTrue(await db.register(200, post_id, True))
             await db.delete_registration_flow(200)
@@ -132,15 +149,15 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(await db.due_reminders(), [])
 
             await db.begin_profile_edit(200)
-            await db.update_profile_edit(200, "given_name", "Петров")
             edit_flow = await db.profile_edit_flow(200)
-            self.assertEqual(edit_flow["surname"], "Петров")
-            await db.save_profile(200, "Петров", "Иван")
+            self.assertEqual(edit_flow["stage"], "full_name")
+            await db.save_profile(200, "Иван Петров", None, "Пирожок", None)
             await db.delete_profile_edit(200)
             self.assertIsNone(await db.profile_edit_flow(200))
 
             participants = await db.event_registrations(post_id)
-            self.assertEqual(participants[0]["surname"], "Петров")
+            self.assertEqual(participants[0]["full_name"], "Иван Петров")
+            self.assertEqual(participants[0]["telegram_first_name"], "Пирожок")
             self.assertTrue(await db.cancel_registration(200, post_id))
             self.assertEqual(await db.user_registrations(200), [])
             available = await db.available_events(200)
@@ -153,8 +170,7 @@ class DatabaseTests(unittest.TestCase):
 
     async def _attendance_is_requested_only_for_active_registration(self):
         with tempfile.TemporaryDirectory() as directory:
-            db = Database(Path(directory) / "test.sqlite3")
-            await db.initialize()
+            db = await migrated_database(Path(directory) / "test.sqlite3")
             post_id = await db.create_post(100, "Встреча", [], [])
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -163,7 +179,7 @@ class DatabaseTests(unittest.TestCase):
             await db.schedule(post_id, datetime.now(timezone.utc))
             delivery = await db.claim_due()
             await db.delivery_succeeded(delivery.id, "11")
-            await db.save_profile(201, "Петрова", "Анна")
+            await db.save_profile(201, "Анна Петрова", "anna", "Анна", "Петрова")
             self.assertTrue(await db.register(201, post_id, False))
 
             async with db.connect() as connection:
@@ -187,8 +203,7 @@ class DatabaseTests(unittest.TestCase):
 
     async def _cancelled_event_stops_notifications(self):
         with tempfile.TemporaryDirectory() as directory:
-            db = Database(Path(directory) / "test.sqlite3")
-            await db.initialize()
+            db = await migrated_database(Path(directory) / "test.sqlite3")
             post_id = await db.create_post(100, "Отменяемая встреча", [], [])
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -196,7 +211,7 @@ class DatabaseTests(unittest.TestCase):
             await db.schedule(post_id, datetime.now(timezone.utc))
             delivery = await db.claim_due()
             await db.delivery_succeeded(delivery.id, "12")
-            await db.save_profile(202, "Сидоров", "Пётр")
+            await db.save_profile(202, "Пётр Сидоров", None, "Пётр", "Сидоров")
             await db.register(202, post_id, True)
             self.assertEqual(len(await db.admin_events()), 1)
 

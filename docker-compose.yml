@@ -1,7 +1,19 @@
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: "no"
+
   bot:
     build: .
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     env_file: .env
     volumes:
       - ./data:/app/data

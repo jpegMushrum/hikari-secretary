@@ -8,6 +8,8 @@ from pathlib import Path
 
 import aiosqlite
 
+REQUIRED_SCHEMA_VERSION = 2
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -47,112 +49,15 @@ class Database:
 
     async def initialize(self) -> None:
         async with self.connect() as db:
-            await db.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS posts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    creator_id INTEGER NOT NULL,
-                    text TEXT NOT NULL DEFAULT '',
-                    entities_json TEXT NOT NULL DEFAULT '[]',
-                    rich_message_json TEXT,
-                    status TEXT NOT NULL DEFAULT 'draft',
-                    scheduled_at TEXT,
-                    created_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    notified INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS media (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-                    position INTEGER NOT NULL,
-                    path TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS deliveries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-                    platform TEXT NOT NULL,
-                    target_key TEXT NOT NULL,
-                    target_name TEXT NOT NULL,
-                    destination TEXT NOT NULL,
-                    message_thread_id INTEGER,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    attempts INTEGER NOT NULL DEFAULT 0,
-                    next_attempt_at TEXT,
-                    external_id TEXT,
-                    last_error TEXT,
-                    published_at TEXT,
-                    UNIQUE(post_id, target_key)
-                );
-                CREATE INDEX IF NOT EXISTS idx_delivery_due
-                ON deliveries(status, next_attempt_at);
-                CREATE TABLE IF NOT EXISTS events (
-                    post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-                    starts_at TEXT NOT NULL,
-                    ends_at TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'active',
-                    cancelled_at TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS user_profiles (
-                    user_id INTEGER PRIMARY KEY,
-                    surname TEXT NOT NULL,
-                    given_name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS registration_flows (
-                    user_id INTEGER PRIMARY KEY,
-                    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-                    stage TEXT NOT NULL,
-                    surname TEXT,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS profile_edit_flows (
-                    user_id INTEGER PRIMARY KEY,
-                    stage TEXT NOT NULL,
-                    surname TEXT,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS registrations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-                    user_id INTEGER NOT NULL REFERENCES user_profiles(user_id),
-                    reminders_enabled INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'registered',
-                    registered_at TEXT NOT NULL,
-                    cancelled_at TEXT,
-                    reminder_sent_at TEXT,
-                    attendance_prompt_sent_at TEXT,
-                    attended INTEGER,
-                    attendance_recorded_at TEXT,
-                    UNIQUE(post_id, user_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_registrations_user
-                ON registrations(user_id, status);
-                """
-            )
-            columns = {
-                row["name"]
-                for row in await (await db.execute("PRAGMA table_info(deliveries)")).fetchall()
-            }
-            if "message_thread_id" not in columns:
-                await db.execute("ALTER TABLE deliveries ADD COLUMN message_thread_id INTEGER")
-            post_columns = {
-                row["name"]
-                for row in await (await db.execute("PRAGMA table_info(posts)")).fetchall()
-            }
-            if "rich_message_json" not in post_columns:
-                await db.execute("ALTER TABLE posts ADD COLUMN rich_message_json TEXT")
-            event_columns = {
-                row["name"]
-                for row in await (await db.execute("PRAGMA table_info(events)")).fetchall()
-            }
-            if "status" not in event_columns:
-                await db.execute(
-                    "ALTER TABLE events ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+            version_row = await (await db.execute(
+                "SELECT MAX(version) AS version FROM schema_migrations"
+            )).fetchone()
+            version = int(version_row["version"] or 0) if version_row else 0
+            if version < REQUIRED_SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"База имеет версию {version}, требуется {REQUIRED_SCHEMA_VERSION}. "
+                    "Сначала запустите контейнер migrate."
                 )
-            if "cancelled_at" not in event_columns:
-                await db.execute("ALTER TABLE events ADD COLUMN cancelled_at TEXT")
             await db.execute(
                 "UPDATE deliveries SET status='retry', next_attempt_at=? WHERE status='publishing'",
                 (utc_now().isoformat(),),
@@ -371,16 +276,50 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
-    async def save_profile(self, user_id: int, surname: str, given_name: str) -> None:
+    async def save_profile(
+        self,
+        user_id: int,
+        full_name: str,
+        telegram_username: str | None,
+        telegram_first_name: str | None,
+        telegram_last_name: str | None,
+    ) -> None:
         now = utc_now().isoformat()
         async with self.connect() as db:
             await db.execute(
-                """INSERT INTO user_profiles(user_id,surname,given_name,created_at,updated_at)
-                   VALUES(?,?,?,?,?)
+                """INSERT INTO user_profiles(
+                       user_id,surname,given_name,full_name,telegram_username,
+                       telegram_first_name,telegram_last_name,created_at,updated_at
+                   ) VALUES(?,'','',?,?,?,?,?,?)
                    ON CONFLICT(user_id) DO UPDATE SET
-                       surname=excluded.surname, given_name=excluded.given_name,
+                       full_name=excluded.full_name,
+                       telegram_username=excluded.telegram_username,
+                       telegram_first_name=excluded.telegram_first_name,
+                       telegram_last_name=excluded.telegram_last_name,
                        updated_at=excluded.updated_at""",
-                (user_id, surname, given_name, now, now),
+                (
+                    user_id, full_name, telegram_username, telegram_first_name,
+                    telegram_last_name, now, now,
+                ),
+            )
+            await db.commit()
+
+    async def update_telegram_identity(
+        self,
+        user_id: int,
+        telegram_username: str | None,
+        telegram_first_name: str | None,
+        telegram_last_name: str | None,
+    ) -> None:
+        async with self.connect() as db:
+            await db.execute(
+                """UPDATE user_profiles SET
+                       telegram_username=?,telegram_first_name=?,telegram_last_name=?,updated_at=?
+                   WHERE user_id=?""",
+                (
+                    telegram_username, telegram_first_name, telegram_last_name,
+                    utc_now().isoformat(), user_id,
+                ),
             )
             await db.commit()
 
@@ -388,9 +327,9 @@ class Database:
         async with self.connect() as db:
             await db.execute(
                 """INSERT INTO profile_edit_flows(user_id,stage,updated_at)
-                   VALUES(?,'surname',?)
+                   VALUES(?,'full_name',?)
                    ON CONFLICT(user_id) DO UPDATE SET
-                       stage='surname',surname=NULL,updated_at=excluded.updated_at""",
+                       stage='full_name',surname=NULL,updated_at=excluded.updated_at""",
                 (user_id, utc_now().isoformat()),
             )
             await db.commit()
@@ -401,18 +340,6 @@ class Database:
                 "SELECT * FROM profile_edit_flows WHERE user_id=?", (user_id,)
             )).fetchone()
             return dict(row) if row else None
-
-    async def update_profile_edit(
-        self, user_id: int, stage: str, surname: str | None = None
-    ) -> None:
-        async with self.connect() as db:
-            await db.execute(
-                """UPDATE profile_edit_flows
-                   SET stage=?,surname=COALESCE(?,surname),updated_at=?
-                   WHERE user_id=?""",
-                (stage, surname, utc_now().isoformat(), user_id),
-            )
-            await db.commit()
 
     async def delete_profile_edit(self, user_id: int) -> None:
         async with self.connect() as db:
@@ -438,21 +365,12 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
-    async def update_registration_flow(
-        self, user_id: int, stage: str, surname: str | None = None
-    ) -> None:
+    async def update_registration_flow(self, user_id: int, stage: str) -> None:
         async with self.connect() as db:
-            if surname is None:
-                await db.execute(
-                    "UPDATE registration_flows SET stage=?,updated_at=? WHERE user_id=?",
-                    (stage, utc_now().isoformat(), user_id),
-                )
-            else:
-                await db.execute(
-                    """UPDATE registration_flows
-                       SET stage=?,surname=?,updated_at=? WHERE user_id=?""",
-                    (stage, surname, utc_now().isoformat(), user_id),
-                )
+            await db.execute(
+                "UPDATE registration_flows SET stage=?,updated_at=? WHERE user_id=?",
+                (stage, utc_now().isoformat(), user_id),
+            )
             await db.commit()
 
     async def delete_registration_flow(self, user_id: int) -> None:
@@ -596,11 +514,12 @@ class Database:
         async with self.connect() as db:
             rows = await (await db.execute(
                 """SELECT r.user_id,r.registered_at,r.reminders_enabled,r.status,r.attended,
-                          u.surname,u.given_name
+                          u.full_name,u.telegram_username,u.telegram_first_name,
+                          u.telegram_last_name
                    FROM registrations r
                    JOIN user_profiles u ON u.user_id=r.user_id
                    WHERE r.post_id=?
-                   ORDER BY u.surname,u.given_name""",
+                   ORDER BY u.full_name""",
                 (post_id,),
             )).fetchall()
             return [dict(row) for row in rows]

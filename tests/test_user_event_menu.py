@@ -62,7 +62,7 @@ class UserEventMenuTests(unittest.TestCase):
         asyncio.run(secretary.register_from_menu(callback))
 
         secretary._begin_user_registration.assert_awaited_once_with(
-            201, callback.message.answer, 9
+            callback.from_user, callback.message.answer, 9
         )
         callback.answer.assert_awaited_once()
 

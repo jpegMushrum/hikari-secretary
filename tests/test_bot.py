@@ -55,3 +55,19 @@ def test_reminder_question_uses_configured_hours() -> None:
     bot = make_bot(1)
 
     assert bot._reminder_question() == "Напомнить вам о мероприятии за 2 ч. до начала?"
+
+
+def test_telegram_profile_prefers_username() -> None:
+    assert SecretaryBot._telegram_profile_label({
+        "telegram_username": "ivan",
+        "telegram_first_name": "Ваня",
+        "telegram_last_name": None,
+    }) == "@ivan"
+
+
+def test_telegram_profile_falls_back_to_display_name() -> None:
+    assert SecretaryBot._telegram_profile_label({
+        "telegram_username": None,
+        "telegram_first_name": "Пирожок",
+        "telegram_last_name": "Японский",
+    }) == "Пирожок Японский"

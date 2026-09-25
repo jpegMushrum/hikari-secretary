@@ -11,7 +11,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, User
 
 from .config import Settings
 from .db import Database, Delivery
@@ -150,7 +150,7 @@ class SecretaryBot:
         payload = (message.text or "").partition(" ")[2].strip()
         if payload.startswith("event_") and payload[6:].isdigit():
             await self._begin_user_registration(
-                message.from_user.id, message.answer, int(payload[6:])
+                message.from_user, message.answer, int(payload[6:])
             )
             return
         if not self._is_admin(message.from_user.id):
@@ -164,7 +164,7 @@ class SecretaryBot:
             "/queue — запланированные публикации\n"
             "/registrations — мероприятия и участники\n"
             "/events — мои личные регистрации\n"
-            "/profile — изменить фамилию и имя\n"
+            "/profile — изменить имя и фамилию\n"
             "/help — помощь"
         )
 
@@ -232,13 +232,16 @@ class SecretaryBot:
             return
         post_id = int(callback.data.split(":")[1])
         await self._begin_user_registration(
-            callback.from_user.id, callback.message.answer, post_id
+            callback.from_user, callback.message.answer, post_id
         )
         await callback.answer()
 
     async def profile(self, message: Message) -> None:
         if not message.from_user or message.chat.type != "private":
             return
+        await self.db.update_telegram_identity(
+            message.from_user.id, *self._telegram_identity_values(message.from_user)
+        )
         profile = await self.db.profile(message.from_user.id)
         if not profile:
             await message.answer(
@@ -246,7 +249,7 @@ class SecretaryBot:
             )
             return
         await message.answer(
-            f"Ваши данные: {profile['surname']} {profile['given_name']}",
+            f"Ваши данные: {profile['full_name']}",
             reply_markup=profile_keyboard(),
         )
 
@@ -267,8 +270,8 @@ class SecretaryBot:
             return
         await self.db.begin_profile_edit(callback.from_user.id)
         await callback.message.answer(
-            f"Сейчас указано: {profile['surname']} {profile['given_name']}.\n"
-            "Введите новую фамилию."
+            f"Сейчас указано: {profile['full_name']}.\n"
+            "Введите новое имя и фамилию одним сообщением."
         )
         await callback.answer()
 
@@ -341,9 +344,11 @@ class SecretaryBot:
                 if row["status"] == "registered" and row["attended"] is not None:
                     attendance = " — был(а)" if row["attended"] else " — не был(а)"
                 reminder = " 🔔" if row["reminders_enabled"] else ""
+                telegram_name = self._telegram_profile_label(row)
                 lines.append(
-                    f"{index}. {row['surname']} {row['given_name']} "
-                    f"(ID {row['user_id']}){reminder}{attendance}"
+                    f"{index}. {row['full_name']}\n"
+                    f"   Telegram: {telegram_name} · ID {row['user_id']}"
+                    f"{reminder}{attendance}"
                 )
             for offset in range(0, len(lines), 40):
                 await callback.message.answer("\n".join(lines[offset:offset + 40]))
@@ -630,7 +635,8 @@ class SecretaryBot:
         )
         await callback.answer()
 
-    async def _begin_user_registration(self, user_id: int, send, post_id: int) -> None:
+    async def _begin_user_registration(self, user: User, send, post_id: int) -> None:
+        user_id = user.id
         if await self.db.profile_edit_flow(user_id):
             await send(
                 "Сначала завершите изменение фамилии и имени, затем снова нажмите «Зарегистрироваться»."
@@ -649,6 +655,9 @@ class SecretaryBot:
             return
         profile = await self.db.profile(user_id)
         if profile:
+            await self.db.update_telegram_identity(
+                user_id, *self._telegram_identity_values(user)
+            )
             await self.db.begin_registration_flow(user_id, post_id, "reminder")
             await send(
                 f"Вы регистрируетесь на мероприятие: {self._post_title(event['text'])}.\n"
@@ -656,26 +665,22 @@ class SecretaryBot:
                 reply_markup=reminder_choice_keyboard(post_id),
             )
             return
-        await self.db.begin_registration_flow(user_id, post_id, "surname")
+        await self.db.begin_registration_flow(user_id, post_id, "full_name")
         await send(
             "Вы регистрируетесь впервые. Эти данные увидят только администраторы.\n\n"
-            "Укажите вашу фамилию."
+            "Укажите имя и фамилию одним сообщением."
         )
 
     async def _continue_profile(self, message: Message, flow: dict) -> None:
         value = " ".join((message.text or "").strip().split())
-        if not 1 < len(value) <= 80:
-            await message.answer("Введите значение длиной от 2 до 80 символов.")
+        if not 1 < len(value) <= 160:
+            await message.answer("Введите имя и фамилию длиной от 2 до 160 символов.")
             return
-        if flow["stage"] == "surname":
-            await self.db.update_registration_flow(
-                message.from_user.id, "given_name", surname=value
-            )
-            await message.answer("Теперь укажите ваше имя.")
-            return
-        if flow["stage"] == "given_name":
+        if flow["stage"] == "full_name":
             await self.db.save_profile(
-                message.from_user.id, flow["surname"], value
+                message.from_user.id,
+                value,
+                *self._telegram_identity_values(message.from_user),
             )
             await self.db.update_registration_flow(message.from_user.id, "reminder")
             await message.answer(
@@ -685,22 +690,18 @@ class SecretaryBot:
 
     async def _continue_profile_edit(self, message: Message, flow: dict) -> None:
         value = " ".join((message.text or "").strip().split())
-        if not 1 < len(value) <= 80:
-            await message.answer("Введите значение длиной от 2 до 80 символов.")
+        if not 1 < len(value) <= 160:
+            await message.answer("Введите имя и фамилию длиной от 2 до 160 символов.")
             return
-        if flow["stage"] == "surname":
-            await self.db.update_profile_edit(
-                message.from_user.id, "given_name", surname=value
-            )
-            await message.answer("Теперь укажите новое имя.")
-            return
-        if flow["stage"] == "given_name":
+        if flow["stage"] == "full_name":
             await self.db.save_profile(
-                message.from_user.id, flow["surname"], value
+                message.from_user.id,
+                value,
+                *self._telegram_identity_values(message.from_user),
             )
             await self.db.delete_profile_edit(message.from_user.id)
             await message.answer(
-                f"Данные обновлены: {flow['surname']} {value}.",
+                f"Данные обновлены: {value}.",
                 reply_markup=user_menu_keyboard(),
             )
 
@@ -947,6 +948,24 @@ class SecretaryBot:
     def _post_title(text: str) -> str:
         clean = " ".join(text.strip().split())
         return (clean[:77] + "...") if len(clean) > 80 else (clean or "Без названия")
+
+    @staticmethod
+    def _telegram_identity_values(user: User) -> tuple[str | None, str | None, str | None]:
+        return user.username, user.first_name, user.last_name
+
+    @staticmethod
+    def _telegram_profile_label(profile: dict) -> str:
+        if profile.get("telegram_username"):
+            return f"@{profile['telegram_username']}"
+        display_name = " ".join(
+            part
+            for part in (
+                profile.get("telegram_first_name"),
+                profile.get("telegram_last_name"),
+            )
+            if part
+        )
+        return display_name or "имя профиля не указано"
 
     def _reminder_question(self) -> str:
         return (
