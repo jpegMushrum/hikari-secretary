@@ -109,3 +109,6 @@ docker compose up -d bot
 ```text
 python -m unittest discover -s tests
 ```
+
+Описание границ модулей и правил расширения проекта находится в
+[`ARCHITECTURE.md`](ARCHITECTURE.md).

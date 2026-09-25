@@ -4,13 +4,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from app.db import Delivery
-from app.bot import SecretaryBot
+from app.presentation import friendly_delivery_error
 from app.publishers import TelegramPublisher
 
 
 class TelegramPublisherTests(unittest.TestCase):
     def test_closed_topic_error_is_human_readable(self):
-        message = SecretaryBot._friendly_delivery_error(Exception("Bad Request: TOPIC_CLOSED"))
+        message = friendly_delivery_error(Exception("Bad Request: TOPIC_CLOSED"))
         self.assertIn("топик Telegram закрыт", message)
 
     def test_text_is_sent_to_requested_topic(self):

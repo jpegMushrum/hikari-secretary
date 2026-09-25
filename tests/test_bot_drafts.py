@@ -4,23 +4,25 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
-from app.bot import SecretaryBot
+from app.handlers.publications import PublicationHandlers
 
 
 class DraftDisplayTests(unittest.TestCase):
     @staticmethod
-    def _secretary(post: dict):
-        secretary = object.__new__(SecretaryBot)
-        secretary.db = SimpleNamespace(post=AsyncMock(return_value=post))
-        secretary.settings = SimpleNamespace(
+    def _handlers(post: dict):
+        settings = SimpleNamespace(
             targets=(),
             timezone=ZoneInfo("Europe/Moscow"),
         )
         bot = Mock()
         bot.attach_mock(AsyncMock(), "send_rich_message")
         bot.attach_mock(AsyncMock(), "send_message")
-        secretary.bot = bot
-        return secretary, bot
+        context = SimpleNamespace(
+            db=SimpleNamespace(post=AsyncMock(return_value=post)),
+            settings=settings,
+            bot=bot,
+        )
+        return PublicationHandlers(context, None), bot
 
     def test_rich_message_is_echoed_before_settings(self):
         post = {
@@ -35,9 +37,9 @@ class DraftDisplayTests(unittest.TestCase):
             },
             "event": None,
         }
-        secretary, bot = self._secretary(post)
+        handlers, bot = self._handlers(post)
 
-        asyncio.run(secretary._show_draft(100, 11))
+        asyncio.run(handlers.show_draft(100, 11))
 
         self.assertEqual(
             [call[0] for call in bot.method_calls],
@@ -55,9 +57,9 @@ class DraftDisplayTests(unittest.TestCase):
             "rich_message": None,
             "event": None,
         }
-        secretary, bot = self._secretary(post)
+        handlers, bot = self._handlers(post)
 
-        asyncio.run(secretary._show_draft(100, 12))
+        asyncio.run(handlers.show_draft(100, 12))
 
         bot.send_rich_message.assert_not_awaited()
         bot.send_message.assert_awaited_once()
@@ -73,10 +75,10 @@ class DraftDisplayTests(unittest.TestCase):
             },
             "event": None,
         }
-        secretary, bot = self._secretary(post)
+        handlers, bot = self._handlers(post)
         settings_message = SimpleNamespace(edit_text=AsyncMock())
 
-        asyncio.run(secretary._show_draft(100, 13, settings_message))
+        asyncio.run(handlers.show_draft(100, 13, settings_message))
 
         bot.send_rich_message.assert_not_awaited()
         bot.send_message.assert_not_awaited()
