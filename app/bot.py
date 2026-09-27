@@ -4,6 +4,13 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    MenuButtonCommands,
+)
 
 from .access import AdminAccess
 from .config import Settings
@@ -62,6 +69,7 @@ class SecretaryBot:
         await self.db.initialize()
         me = await self.bot.get_me()
         self.context.bot_username = me.username
+        await self._configure_telegram_menu()
         log.info(
             "Bot initialized: id=%s username=@%s targets=%s",
             me.id,
@@ -78,3 +86,33 @@ class SecretaryBot:
             scheduler_task.cancel()
             await asyncio.gather(scheduler_task, return_exceptions=True)
             await self.bot.session.close()
+
+    async def _configure_telegram_menu(self) -> None:
+        user_commands = [
+            BotCommand(command="start", description="Открыть главное меню"),
+            BotCommand(command="events", description="Мои мероприятия"),
+            BotCommand(command="profile", description="Настройка профиля"),
+        ]
+        admin_commands = [
+            BotCommand(command="start", description="Открыть панель администратора"),
+            BotCommand(command="queue", description="Очередь публикаций"),
+            BotCommand(command="registrations", description="Мероприятия и участники"),
+            BotCommand(command="events", description="Мои мероприятия"),
+            BotCommand(command="profile", description="Настройка профиля"),
+            BotCommand(command="help", description="Помощь"),
+        ]
+        await self.bot.set_my_commands(
+            user_commands, scope=BotCommandScopeAllPrivateChats()
+        )
+        await self.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        for admin_id in self.settings.admin_ids:
+            try:
+                await self.bot.set_my_commands(
+                    admin_commands, scope=BotCommandScopeChat(chat_id=admin_id)
+                )
+            except TelegramBadRequest:
+                log.warning(
+                    "Could not configure command menu for admin_id=%s; "
+                    "the administrator may need to start the bot first",
+                    admin_id,
+                )

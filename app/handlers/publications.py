@@ -36,6 +36,7 @@ class PublicationHandlers:
 
     def register(self, router: Router) -> None:
         router.message.register(self.queue, Command("queue"))
+        router.callback_query.register(self.queue_button, F.data == "admin_queue")
         router.callback_query.register(self.toggle_target, F.data.startswith("target:"))
         router.callback_query.register(self.toggle_event, F.data.startswith("event:"))
         router.callback_query.register(self.publish_now, F.data.startswith("now:"))
@@ -45,12 +46,21 @@ class PublicationHandlers:
     async def queue(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
+        await self._send_queue(message.answer)
+
+    async def queue_button(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_queue(callback.message.answer)
+        await callback.answer()
+
+    async def _send_queue(self, send) -> None:
         rows = await self.context.db.queue()
         if not rows:
-            await message.answer("Очередь пуста.")
+            await send("Очередь пуста.")
             return
         for row in rows:
-            await message.answer(
+            await send(
                 f"Публикация #{row['id']}\n"
                 f"Время: {format_local(row['scheduled_at'], self.context.settings.timezone)} "
                 f"({self.context.settings.timezone_name})\n"

@@ -27,6 +27,10 @@ class CoreHandlers:
         router.callback_query.register(
             self.show_user_interface, F.data == "show_user_interface"
         )
+        router.callback_query.register(self.new_post, F.data == "admin_new_post")
+        router.callback_query.register(self.help_button, F.data == "admin_help")
+        router.callback_query.register(self.user_home, F.data == "user_home")
+        router.callback_query.register(self.admin_home, F.data == "admin_home")
 
     async def start(self, message: Message) -> None:
         if not message.from_user or message.chat.type != "private":
@@ -38,12 +42,13 @@ class CoreHandlers:
             )
             return
         if not self.access.is_admin(message.from_user.id):
-            await message.answer(
-                "Здесь можно зарегистрироваться на мероприятие и управлять своими регистрациями.",
-                reply_markup=user_menu_keyboard(),
-            )
+            await self._send_user_home(message.answer, False)
             return
-        await message.answer(
+        await self._send_admin_home(message.answer)
+
+    async def _send_admin_home(self, send) -> None:
+        await send(
+            "⚙️ Панель администратора\n\n"
             "Отправьте текст, фотографию с подписью или альбом. Затем выберите цели и время публикации.\n\n"
             "/queue — запланированные публикации\n"
             "/registrations — мероприятия и участники\n"
@@ -53,20 +58,57 @@ class CoreHandlers:
             reply_markup=admin_menu_keyboard(),
         )
 
+    async def _send_user_home(self, send, is_admin: bool) -> None:
+        await send(
+            "👋 Главное меню\n\n"
+            "Здесь можно найти мероприятие, управлять регистрациями и настроить профиль.",
+            reply_markup=user_menu_keyboard(show_admin_return=is_admin),
+        )
+
     async def show_user_interface(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        await callback.message.answer(
-            "Пользовательский интерфейс. Здесь вы можете зарегистрироваться на "
-            "мероприятие и управлять своими регистрациями.",
-            reply_markup=user_menu_keyboard(),
+        await self._send_user_home(callback.message.answer, True)
+        await callback.answer()
+
+    async def user_home(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        await self._send_user_home(
+            callback.message.edit_text,
+            self.access.is_admin(callback.from_user.id),
         )
+        await callback.answer()
+
+    async def admin_home(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_admin_home(callback.message.edit_text)
+        await callback.answer()
+
+    async def new_post(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await callback.message.answer(
+            "Отправьте текст, фотографию с подписью, альбом или Rich Message. "
+            "Я создам черновик и покажу настройки публикации."
+        )
+        await callback.answer()
+
+    async def help_button(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_help(callback.message.answer)
         await callback.answer()
 
     async def help(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
-        await message.answer(
+        await self._send_help(message.answer)
+
+    async def _send_help(self, send) -> None:
+        await send(
             "Поддерживаются текст, ссылки, изображения и Rich Messages. "
             "Оформление Telegram сохраняется. "
             "К публикации можно добавить регистрацию на мероприятие. "

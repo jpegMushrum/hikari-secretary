@@ -41,6 +41,9 @@ class RegistrationHandlers:
         router.message.register(self.my_events, Command("events"))
         router.message.register(self.profile, Command("profile"))
         router.message.register(self.admin_registrations, Command("registrations"))
+        router.callback_query.register(
+            self.admin_registrations_button, F.data == "admin_registrations"
+        )
         router.callback_query.register(self.choose_reminder, F.data.startswith("reminder:"))
         router.callback_query.register(
             self.answer_registration_question,
@@ -122,20 +125,28 @@ class RegistrationHandlers:
         if not result.items:
             await send(
                 "Сейчас нет доступных мероприятий, на которые вы ещё не зарегистрированы.",
-                reply_markup=None,
+                reply_markup=user_menu_keyboard(
+                    show_admin_return=self._is_admin(user_id)
+                ),
             )
             return
-        lines = [f"Доступные мероприятия · страница {result.page + 1}/{result.pages}"]
+        lines = [
+            "🎟 Доступные мероприятия",
+            f"Страница {result.page + 1}/{result.pages}",
+        ]
         for index, row in enumerate(result.items, 1):
             starts = format_local(row["starts_at"], self.context.settings.timezone)
             lines.append(
                 f"\n{index}. {event_title(row)}\n"
-                f"   {starts} ({self.context.settings.timezone_name})"
+                f"   🗓 {starts} ({self.context.settings.timezone_name})"
             )
         await send(
             "\n".join(lines),
             reply_markup=available_events_keyboard(
-                result.items, result.page, result.pages
+                result.items,
+                result.page,
+                result.pages,
+                self._is_admin(user_id),
             ),
         )
 
@@ -168,17 +179,23 @@ class RegistrationHandlers:
     async def _send_profile(self, user_id: int, send) -> None:
         profile = await self.context.db.profile(user_id)
         if not profile:
-            text = "Профиль пока не настроен."
+            text = "👤 Профиль пока не настроен."
         else:
             citizen = self._yes_no(profile["is_russian_citizen"])
             student = self._yes_no(profile["is_itmo_student"])
             text = (
-                f"Ваш профиль:\n\n"
+                f"👤 Ваш профиль\n\n"
                 f"Имя и фамилия: {profile['full_name']}\n"
                 f"Гражданин РФ: {citizen}\n"
                 f"Студент ИТМО: {student}"
             )
-        await send(text, reply_markup=profile_keyboard())
+        await send(
+            text,
+            reply_markup=profile_keyboard(self._is_admin(user_id)),
+        )
+
+    def _is_admin(self, user_id: int) -> bool:
+        return bool(self.access and self.access.is_admin(user_id))
 
     @staticmethod
     def _yes_no(value: int | None) -> str:
@@ -204,9 +221,17 @@ class RegistrationHandlers:
     async def _send_user_events_page(self, user_id: int, page: int, send) -> None:
         result = await self.context.db.user_registrations_page(user_id, page)
         if not result.items:
-            await send("У вас пока нет активных регистраций.", reply_markup=None)
+            await send(
+                "У вас пока нет активных регистраций.",
+                reply_markup=user_menu_keyboard(
+                    show_admin_return=self._is_admin(user_id)
+                ),
+            )
             return
-        lines = [f"Мои мероприятия · страница {result.page + 1}/{result.pages}"]
+        lines = [
+            "📅 Мои мероприятия",
+            f"Страница {result.page + 1}/{result.pages}",
+        ]
         for index, row in enumerate(result.items, 1):
             starts = format_local(row["starts_at"], self.context.settings.timezone)
             if row["reminders_enabled"]:
@@ -215,18 +240,29 @@ class RegistrationHandlers:
                 reminder = "выключено"
             lines.append(
                 f"\n{index}. {event_title(row)}\n"
-                f"   {starts} ({self.context.settings.timezone_name})\n"
-                f"   Напоминание: {reminder}"
+                f"   🗓 {starts} ({self.context.settings.timezone_name})\n"
+                f"   🔔 Напоминание: {reminder}"
             )
         await send(
             "\n".join(lines),
-            reply_markup=user_events_keyboard(result.items, result.page, result.pages),
+            reply_markup=user_events_keyboard(
+                result.items,
+                result.page,
+                result.pages,
+                self._is_admin(user_id),
+            ),
         )
 
     async def admin_registrations(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
         await self._send_admin_events_page(False, 0, message.answer)
+
+    async def admin_registrations_button(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_admin_events_page(False, 0, callback.message.answer)
+        await callback.answer()
 
     async def paginate_admin_events(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
@@ -540,7 +576,10 @@ class RegistrationHandlers:
             )
             await self.context.db.delete_profile_edit(callback.from_user.id)
             await callback.message.edit_text(
-                "Профиль сохранён.", reply_markup=user_menu_keyboard()
+                "Профиль сохранён.",
+                reply_markup=user_menu_keyboard(
+                    show_admin_return=self._is_admin(callback.from_user.id)
+                ),
             )
         await callback.answer()
 

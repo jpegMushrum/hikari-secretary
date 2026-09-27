@@ -27,10 +27,10 @@ class UserEventMenuTests(unittest.TestCase):
     def test_user_menu_contains_event_registration_button(self):
         markup = user_menu_keyboard()
         button = markup.inline_keyboard[0][0]
-        self.assertEqual(button.text, "Записаться на мероприятие")
+        self.assertEqual(button.text, "🎟 Найти мероприятие")
         self.assertEqual(button.callback_data, "available_events")
         profile_button = markup.inline_keyboard[2][0]
-        self.assertEqual(profile_button.text, "Настройка профиля")
+        self.assertEqual(profile_button.text, "👤 Мой профиль")
         self.assertEqual(profile_button.callback_data, "profile_settings")
 
     def test_available_events_are_shown_with_registration_buttons(self):
