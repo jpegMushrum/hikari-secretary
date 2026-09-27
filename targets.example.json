@@ -10,6 +10,12 @@
       "name": "Топик основного Telegram-чата",
       "chat_id": -1001234567890,
       "message_thread_id": 42
+    },
+    {
+      "key": "main_chat",
+      "name": "Топик основного Telegram-чата",
+      "chat_id": -1001234567890,
+      "message_thread_id": 42
     }
   ]
 }

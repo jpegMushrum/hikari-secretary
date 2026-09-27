@@ -43,6 +43,19 @@ class CoreHandlersTests(unittest.TestCase):
         )
         callback.answer.assert_awaited_once_with()
 
+    def test_user_home_uses_club_welcome_message(self) -> None:
+        context = self._context(100)
+        handlers = CoreHandlers(context, AdminAccess(context), SimpleNamespace())
+        send = AsyncMock()
+
+        asyncio.run(handlers._send_user_home(send, False))
+
+        self.assertEqual(
+            send.await_args.args[0],
+            "Привет, я хикари секретарь\n\n"
+            "Тут ты можешь записаться на встречи клуба и получать напоминалки",
+        )
+
     def test_admin_menu_exposes_primary_actions(self) -> None:
         callbacks = {
             button.callback_data

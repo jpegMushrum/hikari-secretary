@@ -58,6 +58,12 @@ class DailyTopicWorker:
         try:
             history = await self.repository.recent_history()
             options = await self.repository.preferences()
+            log.info(
+                "Daily topic settings loaded: job_id=%s jlpt=%s has_comment=%s",
+                job.id,
+                options.jlpt_level,
+                bool(options.admin_comment),
+            )
             post_id, topic = await self.service.generate_and_schedule(
                 history=history,
                 creator_id=self.creator_id,

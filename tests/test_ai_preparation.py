@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 from app.config import Target
 from app.db import Database
-from app.integrations.deepseek import DeepSeekTopicProvider
+from app.integrations.deepseek import DeepSeekError, DeepSeekTopicProvider
 from app.handlers.ai_topics import AiTopicHandlers
 from app.repositories.daily_topics import DailyTopicJob, DailyTopicRepository
 from app.services.daily_topics import (
@@ -380,6 +380,10 @@ class DailyTopicPreparationTests(unittest.TestCase):
         self.assertIn("JLPT N2", prompt)
         self.assertIn("Тема о собеседовании на работу", prompt)
         self.assertNotIn("JLPT N4", prompt)
+
+    def test_provider_rejects_response_marked_with_another_level(self) -> None:
+        with self.assertRaisesRegex(DeepSeekError, "ожидался N2"):
+            DeepSeekTopicProvider._validate_requested_level(self._topic(), "N2")
 
     def test_admin_preview_is_published_and_added_to_history(self) -> None:
         topic = self._topic()

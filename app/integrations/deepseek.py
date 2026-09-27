@@ -73,6 +73,8 @@ class DeepSeekTopicProvider:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 response = await self._request(session, payload)
         topic = self._parse_completion(response)
+        requested_level = options.jlpt_level if options else "N3"
+        self._validate_requested_level(topic, requested_level)
         self._validate_requested_size(topic)
         return topic
 
@@ -118,10 +120,24 @@ class DeepSeekTopicProvider:
             "разговора, тематическую лексику и полезную грамматику. Объяснения и "
             "переводы пиши по-русски, японские примеры — естественным японским. "
             "Не повторяй и не перефразируй близко темы из переданной истории. "
-            f"Сложность японского должна соответствовать JLPT {level}: "
-            "лексика, вопросы, примеры и грамматика не должны быть заметно сложнее "
-            "этого уровня."
+            f"Японский язык должен точно соответствовать JLPT {level}. "
+            "Не упрощай материал до более низкого уровня и не делай его сложнее. "
+            "Тема может быть бытовой, но вопросы, лексика, примеры и грамматика "
+            "должны реально тренировать целевой уровень. "
+            f"Укажи {level} в поле jlpt_level."
         )
+        level_guidance = {
+            "N5": "Используй только базовые короткие фразы и начальную грамматику.",
+            "N4": "Используй элементарные связные фразы и грамматику уровня N4.",
+            "N3": (
+                "Это средний уровень: вопросы должны требовать объяснения причин, "
+                "сравнения и выражения мнения; используй лексику и конструкции N3, "
+                "а не только базовые шаблоны N5-N4."
+            ),
+            "N2": "Используй сложные связные высказывания и конструкции уровня N2.",
+            "N1": "Используй продвинутую абстрактную лексику и конструкции N1.",
+        }
+        system_prompt += f" {level_guidance[level]}"
         if options and options.admin_comment:
             system_prompt += (
                 " Пожелание администратора к текущему материалу: "
@@ -132,6 +148,7 @@ class DeepSeekTopicProvider:
             f"{json.dumps(used, ensure_ascii=False)}\n\n"
             "Сформируй JSON строго такого вида:\n"
             "{\n"
+            f'  "jlpt_level": "{level}",\n'
             '  "title": "тема разговора",\n'
             '  "vocabulary_theme": "отдельная тема лексики",\n'
             '  "introduction": "краткое введение",\n'
@@ -167,6 +184,13 @@ class DeepSeekTopicProvider:
                 raise DeepSeekError(
                     f"DeepSeek вернул {actual} {label}, ожидалось {requested}"
                 )
+
+    @staticmethod
+    def _validate_requested_level(topic: DailyTopic, requested: str) -> None:
+        if topic.jlpt_level != requested:
+            raise DeepSeekError(
+                f"DeepSeek вернул уровень {topic.jlpt_level}, ожидался {requested}"
+            )
 
     @classmethod
     def _parse_completion(cls, response: dict[str, Any]) -> DailyTopic:
@@ -209,6 +233,7 @@ class DeepSeekTopicProvider:
                     )
                     for item in cls._object_list(value, "grammar")
                 ),
+                jlpt_level=cls._text(value, "jlpt_level").upper(),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DeepSeekError("Структура ответа DeepSeek не соответствует схеме") from exc

@@ -219,6 +219,12 @@ class AiTopicHandlers:
         try:
             history = await self.repository.recent_history()
             options = await self.repository.preferences()
+            log.info(
+                "Manual AI generation settings: admin_id=%s jlpt=%s has_comment=%s",
+                callback.from_user.id,
+                options.jlpt_level,
+                bool(options.admin_comment),
+            )
             topic = await self.service.generate(
                 history, options,
             )
@@ -376,6 +382,14 @@ class AiTopicHandlers:
                 options = TopicGenerationOptions(
                     options.jlpt_level, "\n".join(parts)
                 )
+            log.info(
+                "Queued AI regeneration settings: post_id=%s admin_id=%s "
+                "jlpt=%s has_revision=%s",
+                post_id,
+                admin_id,
+                options.jlpt_level,
+                revision is not None,
+            )
             history = await self.repository.recent_history(
                 exclude_post_id=post_id
             )

@@ -73,8 +73,8 @@ class CoreHandlers:
 
     async def _send_user_home(self, send, is_admin: bool) -> None:
         await send(
-            "👋 Главное меню\n\n"
-            "Здесь можно найти мероприятие, управлять регистрациями и настроить профиль.",
+            "Привет, я хикари секретарь\n\n"
+            "Тут ты можешь записаться на встречи клуба и получать напоминалки",
             reply_markup=user_menu_keyboard(show_admin_return=is_admin),
         )
 

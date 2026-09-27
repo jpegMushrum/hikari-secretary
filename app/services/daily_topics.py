@@ -44,6 +44,7 @@ class DailyTopic:
     questions: tuple[str, ...]
     vocabulary: tuple[VocabularyItem, ...]
     grammar: tuple[GrammarPoint, ...]
+    jlpt_level: str = "N3"
 
     def as_json_value(self) -> dict:
         return asdict(self)
@@ -138,6 +139,8 @@ class DailyTopicRenderer:
 
     @staticmethod
     def _validate(topic: DailyTopic) -> None:
+        if topic.jlpt_level not in {"N5", "N4", "N3", "N2", "N1"}:
+            raise ValueError("Некорректный уровень JLPT в сгенерированной теме")
         if not topic.title.strip() or len(topic.title) > 160:
             raise ValueError("Название темы должно содержать от 1 до 160 символов")
         if not topic.introduction.strip():
