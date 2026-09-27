@@ -6,7 +6,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db import Database
-from migrations.runner import migration_001_baseline, migration_002_profile_v2, migrate
+from migrations.runner import (
+    migration_001_baseline,
+    migration_002_profile_v2,
+    migration_003_events_and_registration_preferences,
+    migrate,
+)
 
 
 async def migrated_database(path: Path) -> Database:
@@ -17,6 +22,49 @@ async def migrated_database(path: Path) -> Database:
 
 
 class DatabaseTests(unittest.TestCase):
+    def test_v4_adds_ai_infrastructure_to_v3_database(self):
+        asyncio.run(self._v4_adds_ai_infrastructure_to_v3_database())
+
+    async def _v4_adds_ai_infrastructure_to_v3_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL
+                    )"""
+                )
+                migration_001_baseline(connection)
+                migration_002_profile_v2(connection)
+                migration_003_events_and_registration_preferences(connection)
+                connection.execute(
+                    """INSERT INTO posts(creator_id,text,created_at,status)
+                       VALUES(1,'Существующий пост','now','sent')"""
+                )
+                connection.executemany(
+                    "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,'now')",
+                    [
+                        (1, "baseline"),
+                        (2, "profile_v2"),
+                        (3, "events_and_registration_preferences"),
+                    ],
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            self.assertEqual(migrate(path, create_backup=False), [4])
+            db = Database(path)
+            await db.initialize()
+            post = await db.post(1)
+            self.assertEqual(post["source"], "admin")
+            async with db.connect() as connection:
+                table = await (await connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='ai_topic_jobs'"
+                )).fetchone()
+            self.assertIsNotNone(table)
+
     def test_v3_migration_backfills_event_title_and_preserves_registration(self):
         asyncio.run(self._v3_migration_backfills_event_title_and_preserves_registration())
 

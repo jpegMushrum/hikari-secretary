@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-REQUIRED_SCHEMA_VERSION = 3
+REQUIRED_SCHEMA_VERSION = 4
 
 
 def utc_now() -> datetime:
@@ -30,6 +30,14 @@ class Delivery:
     media_paths: list[str]
     attempts: int
     event_enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryTarget:
+    key: str
+    name: str
+    destination: str
+    message_thread_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -73,6 +81,12 @@ class Database:
             await db.execute(
                 "UPDATE deliveries SET status='retry', next_attempt_at=? WHERE status='publishing'",
                 (utc_now().isoformat(),),
+            )
+            await db.execute(
+                """UPDATE ai_topic_jobs
+                   SET status='retry',next_attempt_at=?,updated_at=?
+                   WHERE status='generating'""",
+                (utc_now().isoformat(), utc_now().isoformat()),
             )
             await db.execute(
                 """UPDATE deliveries
@@ -120,6 +134,81 @@ class Database:
             )
             await db.commit()
             return post_id
+
+    async def create_scheduled_post(
+        self,
+        creator_id: int,
+        text: str,
+        entities: list[dict],
+        media_paths: list[str],
+        targets: tuple[DeliveryTarget, ...],
+        scheduled_at: datetime,
+        *,
+        source: str,
+        source_key: str | None = None,
+        rich_message: dict | None = None,
+    ) -> int:
+        if not targets:
+            raise ValueError("Для публикации нужна хотя бы одна цель")
+        when = scheduled_at.astimezone(timezone.utc).isoformat()
+        now = utc_now().isoformat()
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                if source_key:
+                    existing = await (await db.execute(
+                        "SELECT id FROM posts WHERE source_key=?", (source_key,)
+                    )).fetchone()
+                    if existing:
+                        await db.commit()
+                        return int(existing["id"])
+                cursor = await db.execute(
+                    """INSERT INTO posts(
+                           creator_id,text,entities_json,rich_message_json,status,
+                           scheduled_at,created_at,source,source_key
+                       ) VALUES(?,?,?,?,'scheduled',?,?,?,?)""",
+                    (
+                        creator_id,
+                        text,
+                        json.dumps(entities, ensure_ascii=False),
+                        json.dumps(rich_message, ensure_ascii=False)
+                        if rich_message else None,
+                        when,
+                        now,
+                        source,
+                        source_key,
+                    ),
+                )
+                post_id = int(cursor.lastrowid)
+                await db.executemany(
+                    "INSERT INTO media(post_id,position,path) VALUES(?,?,?)",
+                    [
+                        (post_id, index, path)
+                        for index, path in enumerate(media_paths)
+                    ],
+                )
+                await db.executemany(
+                    """INSERT INTO deliveries(
+                           post_id,platform,target_key,target_name,destination,
+                           message_thread_id,next_attempt_at
+                       ) VALUES(?,'telegram',?,?,?,?,?)""",
+                    [
+                        (
+                            post_id,
+                            target.key,
+                            target.name,
+                            target.destination,
+                            target.message_thread_id,
+                            when,
+                        )
+                        for target in targets
+                    ],
+                )
+                await db.commit()
+                return post_id
+            except Exception:
+                await db.rollback()
+                raise
 
     async def post(self, post_id: int):
         async with self.connect() as db:

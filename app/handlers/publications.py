@@ -21,6 +21,7 @@ from ..formatting import (
 from ..keyboards import draft_keyboard, queue_cancel_keyboard
 from ..presentation import remove_media
 from ..runtime import AlbumBuffer, AppContext, EventSetup
+from ..services.publications import PublicationService
 
 log = logging.getLogger(__name__)
 
@@ -30,9 +31,13 @@ class PublicationHandlers:
         self,
         context: AppContext,
         access: AdminAccess,
+        service: PublicationService | None = None,
     ):
         self.context = context
         self.access = access
+        self.service = service or PublicationService(
+            context.db, context.settings.targets
+        )
 
     def register(self, router: Router) -> None:
         router.message.register(self.queue, Command("queue"))
@@ -164,7 +169,7 @@ class PublicationHandlers:
             if when >= starts_at:
                 await message.answer("Публикация должна выйти раньше начала мероприятия.")
                 return
-        if await self.context.db.schedule(post_id, when):
+        if await self.service.schedule(post_id, when):
             self.context.state.awaiting_schedule.pop(message.from_user.id, None)
             await message.answer(
                 f"Публикация #{post_id} запланирована на "
@@ -199,7 +204,7 @@ class PublicationHandlers:
         text = rich_message_preview(rich_message) if rich_message else (lead.text or lead.caption or "")
         entities = [] if rich_message else entities_to_json(lead.entities or lead.caption_entities)
         media_paths = [await self._download_photo(item) for item in messages if item.photo]
-        post_id = await self.context.db.create_post(
+        post_id = await self.service.create_draft(
             lead.from_user.id, text, entities, media_paths, rich_message
         )
         log.info(
@@ -260,9 +265,7 @@ class PublicationHandlers:
             await callback.answer("Черновик уже закрыт", show_alert=True)
             return
         target = self.context.settings.targets[index]
-        await self.context.db.toggle_delivery(
-            post_id, target.key, target.name, target.destination, target.message_thread_id
-        )
+        await self.service.toggle_target(post_id, target)
         await self.show_draft(callback.message.chat.id, post_id, callback.message)
         await callback.answer()
 
@@ -297,7 +300,7 @@ class PublicationHandlers:
             if starts_at <= datetime.now(timezone.utc):
                 await callback.answer("Мероприятие уже началось", show_alert=True)
                 return
-        if await self.context.db.schedule(post_id, datetime.now(timezone.utc)):
+        if await self.service.schedule(post_id, datetime.now(timezone.utc)):
             self.context.state.awaiting_event.pop(callback.from_user.id, None)
             await callback.message.edit_text(f"Публикация #{post_id} поставлена в очередь.")
         else:

@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 
 class SchedulerWorker:
+    name = "scheduler"
+
     def __init__(self, context: AppContext):
         self.context = context
         self.publisher = TelegramPublisher(context.bot)

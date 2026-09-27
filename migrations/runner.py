@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 
-LATEST_VERSION = 3
+LATEST_VERSION = 4
 
 
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -183,6 +183,41 @@ def migration_003_events_and_registration_preferences(db: sqlite3.Connection) ->
     db.execute("DELETE FROM profile_edit_flows")
 
 
+def migration_004_ai_preparation(db: sqlite3.Connection) -> None:
+    existing = _columns(db, "posts")
+    additions = (
+        ("source", "TEXT NOT NULL DEFAULT 'admin'"),
+        ("source_key", "TEXT"),
+    )
+    for name, definition in additions:
+        if name not in existing:
+            db.execute(f"ALTER TABLE posts ADD COLUMN {name} {definition}")
+
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_source_key "
+        "ON posts(source_key) WHERE source_key IS NOT NULL"
+    )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS ai_topic_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scheduled_for TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at TEXT NOT NULL,
+            prompt_version TEXT,
+            topic_json TEXT,
+            post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )"""
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_topic_jobs_due "
+        "ON ai_topic_jobs(status, next_attempt_at)"
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "baseline", migration_001_baseline),
     (2, "profile_v2", migration_002_profile_v2),
@@ -191,6 +226,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
         "events_and_registration_preferences",
         migration_003_events_and_registration_preferences,
     ),
+    (4, "ai_preparation", migration_004_ai_preparation),
 )
 
 

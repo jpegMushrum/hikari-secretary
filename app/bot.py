@@ -21,7 +21,9 @@ from .handlers.publications import PublicationHandlers
 from .handlers.registrations import RegistrationHandlers
 from .logging_middleware import UpdateLoggingMiddleware
 from .runtime import AppContext
+from .services.publications import PublicationService
 from .workers.scheduler import SchedulerWorker
+from .workers.base import BackgroundWorker
 
 log = logging.getLogger(__name__)
 
@@ -37,8 +39,11 @@ class SecretaryBot:
         self.router = Router()
 
         access = AdminAccess(self.context)
+        publication_service = PublicationService(database, settings.targets)
         registrations = RegistrationHandlers(self.context, access)
-        publications = PublicationHandlers(self.context, access)
+        publications = PublicationHandlers(
+            self.context, access, publication_service
+        )
         core = CoreHandlers(self.context, access, registrations)
         inbox = InboxHandlers(registrations, publications)
 
@@ -48,7 +53,9 @@ class SecretaryBot:
         # The catch-all content handler must be registered after specific commands.
         inbox.register(self.router)
 
-        self.worker = SchedulerWorker(self.context)
+        self.workers: tuple[BackgroundWorker, ...] = (
+            SchedulerWorker(self.context),
+        )
         self.dispatcher.update.outer_middleware(UpdateLoggingMiddleware())
         self.dispatcher.include_router(self.router)
 
@@ -76,15 +83,19 @@ class SecretaryBot:
             me.username,
             len(self.settings.targets),
         )
-        scheduler_task = asyncio.create_task(self.worker.run())
+        worker_tasks = [
+            asyncio.create_task(worker.run(), name=f"worker:{worker.name}")
+            for worker in self.workers
+        ]
         try:
             await self.dispatcher.start_polling(
                 self.bot,
                 allowed_updates=self.dispatcher.resolve_used_update_types(),
             )
         finally:
-            scheduler_task.cancel()
-            await asyncio.gather(scheduler_task, return_exceptions=True)
+            for task in worker_tasks:
+                task.cancel()
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
             await self.bot.session.close()
 
     async def _configure_telegram_menu(self) -> None:
