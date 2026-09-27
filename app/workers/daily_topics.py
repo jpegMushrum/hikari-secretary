@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from ..repositories.daily_topics import (
     DailyTopicJob,
@@ -56,11 +57,13 @@ class DailyTopicWorker:
         )
         try:
             history = await self.repository.recent_history()
+            options = await self.repository.preferences()
             post_id, topic = await self.service.generate_and_schedule(
                 history=history,
                 creator_id=self.creator_id,
                 scheduled_at=max(job.scheduled_for, utc_now()),
                 idempotency_key=f"daily-topic-job:{job.id}",
+                options=options,
             )
             await self.repository.mark_scheduled(
                 job.id, post_id, topic.as_json_value()
@@ -85,3 +88,51 @@ class DailyTopicWorker:
                 job.id,
                 job.attempts,
             )
+
+
+class DailyTopicPlannerWorker:
+    """Keeps the next automatic topic in the durable queue."""
+
+    name = "daily_topic_planner"
+    def __init__(
+        self,
+        repository: DailyTopicRepository,
+        *,
+        publish_time: time,
+        timezone_value: ZoneInfo,
+        poll_interval_seconds: int = 60,
+    ):
+        self.repository = repository
+        self.publish_time = publish_time
+        self.timezone = timezone_value
+        self.poll_interval_seconds = max(1, poll_interval_seconds)
+
+    async def run(self) -> None:
+        while True:
+            try:
+                await self.plan()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Daily topic planner loop failed")
+            await asyncio.sleep(self.poll_interval_seconds)
+
+    async def plan(self, now: datetime | None = None) -> int:
+        current = (now or utc_now()).astimezone(self.timezone)
+        scheduled_local = datetime.combine(
+            current.date(), self.publish_time, tzinfo=self.timezone
+        )
+        if scheduled_local <= current:
+            scheduled_local += timedelta(days=1)
+        scheduled_utc = scheduled_local.astimezone(timezone.utc)
+        job_id = await self.repository.enqueue(
+            scheduled_utc,
+            "daily-v2",
+            available_at=current.astimezone(timezone.utc),
+        )
+        log.debug(
+            "Next daily topic job planned: job_id=%s scheduled_for=%s",
+            job_id,
+            scheduled_utc.isoformat(),
+        )
+        return job_id

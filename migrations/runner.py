@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 
-LATEST_VERSION = 4
+LATEST_VERSION = 5
 
 
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -218,6 +218,24 @@ def migration_004_ai_preparation(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_005_ai_topic_settings(db: sqlite3.Connection) -> None:
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS ai_topic_settings (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            jlpt_level TEXT NOT NULL DEFAULT 'N3',
+            admin_comment TEXT,
+            updated_by INTEGER,
+            updated_at TEXT NOT NULL
+        )"""
+    )
+    db.execute(
+        """INSERT OR IGNORE INTO ai_topic_settings(
+               id,jlpt_level,admin_comment,updated_by,updated_at
+           ) VALUES(1,'N3',NULL,NULL,?)""",
+        (datetime.now(timezone.utc).isoformat(),),
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "baseline", migration_001_baseline),
     (2, "profile_v2", migration_002_profile_v2),
@@ -227,6 +245,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
         migration_003_events_and_registration_preferences,
     ),
     (4, "ai_preparation", migration_004_ai_preparation),
+    (5, "ai_topic_settings", migration_005_ai_topic_settings),
 )
 
 

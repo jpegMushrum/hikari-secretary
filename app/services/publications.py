@@ -73,3 +73,8 @@ class PublicationService:
             source_key=idempotency_key,
             rich_message=rich_message,
         )
+
+    async def replace_scheduled(
+        self, post_id: int, *, text: str, rich_message: dict
+    ) -> bool:
+        return await self.db.replace_scheduled_post(post_id, text, rich_message)

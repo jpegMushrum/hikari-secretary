@@ -70,7 +70,9 @@ class PublicationHandlers:
                 f"Время: {format_local(row['scheduled_at'], self.context.settings.timezone)} "
                 f"({self.context.settings.timezone_name})\n"
                 f"Цели: {row['targets']}",
-                reply_markup=queue_cancel_keyboard(row["id"]),
+                reply_markup=queue_cancel_keyboard(
+                    row["id"], row["source"] == "ai_daily_topic"
+                ),
             )
 
     async def content(self, message: Message) -> None:

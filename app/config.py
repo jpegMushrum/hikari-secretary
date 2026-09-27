@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -28,6 +29,7 @@ class Target:
 @dataclass(frozen=True, slots=True)
 class AiTopicSettings:
     target: Target | None
+    auto_publish_time: time | None
     question_count: int
     vocabulary_count: int
     grammar_count: int
@@ -141,6 +143,20 @@ def load_settings() -> Settings:
         raise ValueError(
             "При заданном DEEPSEEK_API_KEY необходимо указать AI_TOPIC_TARGET_KEY"
         )
+    auto_publish_raw = os.getenv("AI_TOPIC_AUTO_PUBLISH_TIME", "").strip()
+    try:
+        auto_publish_time = (
+            datetime.strptime(auto_publish_raw, "%H:%M").time()
+            if auto_publish_raw else None
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "AI_TOPIC_AUTO_PUBLISH_TIME должен быть в формате ЧЧ:ММ"
+        ) from exc
+    if auto_publish_time and not deepseek_api_key:
+        raise ValueError(
+            "Для автоматической публикации необходимо задать DEEPSEEK_API_KEY"
+        )
 
     def bounded_int(name: str, default: int, upper: int) -> int:
         try:
@@ -172,6 +188,7 @@ def load_settings() -> Settings:
         ),
         ai_topics=AiTopicSettings(
             target=ai_target,
+            auto_publish_time=auto_publish_time,
             question_count=bounded_int("AI_TOPIC_QUESTION_COUNT", 5, 8),
             vocabulary_count=bounded_int("AI_TOPIC_VOCABULARY_COUNT", 10, 20),
             grammar_count=bounded_int("AI_TOPIC_GRAMMAR_COUNT", 3, 8),

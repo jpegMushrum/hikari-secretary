@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..db import Database
-from ..services.daily_topics import TopicHistoryItem
+from ..services.daily_topics import TopicGenerationOptions, TopicHistoryItem
 
 
 def utc_now() -> datetime:
@@ -26,8 +26,15 @@ class DailyTopicRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    async def enqueue(self, scheduled_for: datetime, prompt_version: str) -> int:
+    async def enqueue(
+        self,
+        scheduled_for: datetime,
+        prompt_version: str,
+        *,
+        available_at: datetime | None = None,
+    ) -> int:
         scheduled = scheduled_for.astimezone(timezone.utc).isoformat()
+        available = (available_at or scheduled_for).astimezone(timezone.utc).isoformat()
         now = utc_now().isoformat()
         async with self.db.connect() as connection:
             await connection.execute(
@@ -35,13 +42,44 @@ class DailyTopicRepository:
                        scheduled_for,status,next_attempt_at,prompt_version,
                        created_at,updated_at
                    ) VALUES(?,'pending',?,?,?,?)""",
-                (scheduled, scheduled, prompt_version, now, now),
+                (scheduled, available, prompt_version, now, now),
             )
             row = await (await connection.execute(
                 "SELECT id FROM ai_topic_jobs WHERE scheduled_for=?", (scheduled,)
             )).fetchone()
             await connection.commit()
             return int(row["id"])
+
+    async def preferences(self) -> TopicGenerationOptions:
+        async with self.db.connect() as connection:
+            row = await (await connection.execute(
+                "SELECT jlpt_level,admin_comment FROM ai_topic_settings WHERE id=1"
+            )).fetchone()
+        if not row:
+            raise RuntimeError("Настройки AI-тем не инициализированы")
+        return TopicGenerationOptions(row["jlpt_level"], row["admin_comment"])
+
+    async def save_preferences(
+        self, options: TopicGenerationOptions, updated_by: int
+    ) -> None:
+        if options.jlpt_level not in {"N5", "N4", "N3", "N2", "N1"}:
+            raise ValueError("Некорректный уровень JLPT")
+        comment = options.admin_comment.strip() if options.admin_comment else None
+        if comment and len(comment) > 500:
+            raise ValueError("Комментарий не должен превышать 500 символов")
+        async with self.db.connect() as connection:
+            await connection.execute(
+                """UPDATE ai_topic_settings
+                   SET jlpt_level=?,admin_comment=?,updated_by=?,updated_at=?
+                   WHERE id=1""",
+                (
+                    options.jlpt_level,
+                    comment,
+                    updated_by,
+                    utc_now().isoformat(),
+                ),
+            )
+            await connection.commit()
 
     async def claim_due(self, now: datetime | None = None) -> DailyTopicJob | None:
         current = (now or utc_now()).astimezone(timezone.utc).isoformat()
@@ -124,14 +162,20 @@ class DailyTopicRepository:
                 raise RuntimeError("AI-задание уже не находится в обработке")
 
     async def recent_history(
-        self, limit: int | None = None
+        self, limit: int | None = None, *, exclude_post_id: int | None = None
     ) -> list[TopicHistoryItem]:
         limit_sql = " LIMIT ?" if limit is not None else ""
-        parameters = (max(1, limit),) if limit is not None else ()
+        where = "status='scheduled' AND topic_json IS NOT NULL"
+        parameters: tuple = ()
+        if exclude_post_id is not None:
+            where += " AND (post_id IS NULL OR post_id<>?)"
+            parameters += (exclude_post_id,)
+        if limit is not None:
+            parameters += (max(1, limit),)
         async with self.db.connect() as connection:
             rows = await (await connection.execute(
                 """SELECT topic_json FROM ai_topic_jobs
-                   WHERE status='scheduled' AND topic_json IS NOT NULL
+                   WHERE """ + where + """
                    ORDER BY scheduled_for DESC""" + limit_sql,
                 parameters,
             )).fetchall()
@@ -146,6 +190,20 @@ class DailyTopicRepository:
             if title and vocabulary_theme:
                 history.append(TopicHistoryItem(title, vocabulary_theme))
         return history
+
+    async def replace_topic_for_post(self, post_id: int, topic: dict) -> bool:
+        async with self.db.connect() as connection:
+            cursor = await connection.execute(
+                """UPDATE ai_topic_jobs SET topic_json=?,updated_at=?
+                   WHERE post_id=? AND status='scheduled'""",
+                (
+                    json.dumps(topic, ensure_ascii=False),
+                    utc_now().isoformat(),
+                    post_id,
+                ),
+            )
+            await connection.commit()
+            return cursor.rowcount == 1
 
     async def record_manual_publication(
         self, post_id: int, topic: dict, prompt_version: str = "admin-v1"

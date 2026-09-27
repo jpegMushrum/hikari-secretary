@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Protocol, Sequence
 
+from aiogram.types import InputRichMessage
+
 from .publications import PublicationService
 
 
@@ -82,6 +84,58 @@ class DailyTopicRenderer:
             raise ValueError("Сгенерированная тема превышает лимит Telegram")
         return text
 
+    def rich_message(self, topic: DailyTopic) -> dict:
+        self._validate(topic)
+        vocabulary = "\n".join(
+            f"• {item.japanese}（{item.reading}）— {item.translation}"
+            for item in topic.vocabulary
+        )
+        grammar_parts: list[str] = []
+        for item in topic.grammar:
+            grammar_parts.append(
+                f"• {item.pattern} — {item.explanation}\n"
+                f"  {item.example}\n"
+                f"  {item.translation}"
+            )
+        value = {
+            "blocks": [
+                {"type": "heading", "text": "🗣 Тема дня", "size": 2},
+                {
+                    "type": "paragraph",
+                    "text": f"{topic.title}\n\n{topic.introduction}",
+                },
+                {
+                    "type": "heading",
+                    "text": "💬 Вопросы на обсуждение",
+                    "size": 2,
+                },
+                {
+                    "type": "paragraph",
+                    "text": "\n".join(
+                        f"• {question}" for question in topic.questions
+                    ),
+                },
+                {
+                    "type": "details",
+                    "summary": "📚 Полезная лексика",
+                    "blocks": [{"type": "paragraph", "text": vocabulary}],
+                    "is_open": False,
+                },
+                {
+                    "type": "details",
+                    "summary": "🧩 Полезная грамматика",
+                    "blocks": [{
+                        "type": "paragraph",
+                        "text": "\n\n".join(grammar_parts),
+                    }],
+                    "is_open": False,
+                },
+            ]
+        }
+        return InputRichMessage.model_validate(value).model_dump(
+            mode="json", exclude_none=True
+        )
+
     @staticmethod
     def _validate(topic: DailyTopic) -> None:
         if not topic.title.strip() or len(topic.title) > 160:
@@ -141,8 +195,9 @@ class DailyTopicService:
         creator_id: int,
         scheduled_at: datetime,
         idempotency_key: str,
+        options: TopicGenerationOptions | None = None,
     ) -> tuple[int, DailyTopic]:
-        topic = await self.generate(history)
+        topic = await self.generate(history, options)
         post_id = await self.schedule(
             topic,
             creator_id=creator_id,
@@ -179,6 +234,7 @@ class DailyTopicService:
         idempotency_key: str,
     ) -> int:
         text = self.renderer.render(topic)
+        rich_message = self.renderer.rich_message(topic)
         return await self.publications.create_scheduled(
             creator_id=creator_id,
             text=text,
@@ -186,6 +242,14 @@ class DailyTopicService:
             scheduled_at=scheduled_at,
             source="ai_daily_topic",
             idempotency_key=idempotency_key,
+            rich_message=rich_message,
+        )
+
+    async def replace_scheduled(self, post_id: int, topic: DailyTopic) -> bool:
+        text = self.renderer.render(topic)
+        rich_message = self.renderer.rich_message(topic)
+        return await self.publications.replace_scheduled(
+            post_id, text=text, rich_message=rich_message
         )
 
     @staticmethod

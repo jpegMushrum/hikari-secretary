@@ -54,7 +54,7 @@ class DatabaseTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(migrate(path, create_backup=False), [4])
+            self.assertEqual(migrate(path, create_backup=False), [4, 5])
             db = Database(path)
             await db.initialize()
             post = await db.post(1)
@@ -63,7 +63,12 @@ class DatabaseTests(unittest.TestCase):
                 table = await (await connection.execute(
                     "SELECT name FROM sqlite_master WHERE name='ai_topic_jobs'"
                 )).fetchone()
+                settings = await (await connection.execute(
+                    "SELECT jlpt_level,admin_comment FROM ai_topic_settings WHERE id=1"
+                )).fetchone()
             self.assertIsNotNone(table)
+            self.assertEqual(settings["jlpt_level"], "N3")
+            self.assertIsNone(settings["admin_comment"])
 
     def test_v3_migration_backfills_event_title_and_preserves_registration(self):
         asyncio.run(self._v3_migration_backfills_event_title_and_preserves_registration())

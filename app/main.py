@@ -25,10 +25,12 @@ def main() -> None:
         settings.database_path,
     )
     log.info(
-        "AI topic configuration: enabled=%s target=%s questions=%s "
+        "AI topic configuration: enabled=%s target=%s auto_publish_time=%s questions=%s "
         "vocabulary=%s grammar=%s",
         bool(settings.deepseek_api_key),
         settings.ai_topics.target.key if settings.ai_topics.target else None,
+        settings.ai_topics.auto_publish_time.strftime("%H:%M")
+        if settings.ai_topics.auto_publish_time else None,
         settings.ai_topics.question_count,
         settings.ai_topics.vocabulary_count,
         settings.ai_topics.grammar_count,

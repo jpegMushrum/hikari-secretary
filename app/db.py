@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-REQUIRED_SCHEMA_VERSION = 4
+REQUIRED_SCHEMA_VERSION = 5
 
 
 def utc_now() -> datetime:
@@ -319,13 +319,32 @@ class Database:
                 "UPDATE posts SET status='cancelled', completed_at=? WHERE id=? AND status IN ('draft','scheduled')",
                 (utc_now().isoformat(), post_id),
             )
+            if cursor.rowcount == 1:
+                await db.execute(
+                    """UPDATE ai_topic_jobs SET status='cancelled',updated_at=?
+                       WHERE post_id=? AND status='scheduled'""",
+                    (utc_now().isoformat(), post_id),
+                )
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def replace_scheduled_post(
+        self, post_id: int, text: str, rich_message: dict
+    ) -> bool:
+        async with self.connect() as db:
+            cursor = await db.execute(
+                """UPDATE posts
+                   SET text=?,entities_json='[]',rich_message_json=?
+                   WHERE id=? AND status='scheduled' AND source='ai_daily_topic'""",
+                (text, json.dumps(rich_message, ensure_ascii=False), post_id),
+            )
             await db.commit()
             return cursor.rowcount == 1
 
     async def queue(self, limit: int = 20) -> list[dict]:
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT p.id,p.creator_id,p.scheduled_at,p.status,
+                """SELECT p.id,p.creator_id,p.scheduled_at,p.status,p.source,
                           GROUP_CONCAT(d.target_name, ', ') AS targets
                    FROM posts p JOIN deliveries d ON d.post_id=p.id
                    WHERE p.status='scheduled'

@@ -28,10 +28,27 @@ def draft_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def queue_cancel_keyboard(post_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Отменить публикацию", callback_data=f"cancel:{post_id}")
-    ]])
+def queue_cancel_keyboard(post_id: int, ai_generated: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if ai_generated:
+        rows.extend([
+            [InlineKeyboardButton(
+                text="👁 Предпросмотр", callback_data=f"ai_queue_preview:{post_id}"
+            )],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Исправить", callback_data=f"ai_queue_revise:{post_id}"
+                ),
+                InlineKeyboardButton(
+                    text="🔄 Перегенерировать",
+                    callback_data=f"ai_queue_regenerate:{post_id}",
+                ),
+            ],
+        ])
+    rows.append([InlineKeyboardButton(
+        text="Отменить публикацию", callback_data=f"cancel:{post_id}"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def binary_registration_keyboard(post_id: int, field: str) -> InlineKeyboardMarkup:
@@ -148,6 +165,15 @@ def ai_comment_cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
             text="✖ Отменить", callback_data="ai_comment_cancel"
+        )
+    ]])
+
+
+def ai_revision_cancel_keyboard(post_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="✖ Отменить исправление",
+            callback_data=f"ai_queue_revision_cancel:{post_id}",
         )
     ]])
 

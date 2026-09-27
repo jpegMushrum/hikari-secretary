@@ -2,7 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,7 +23,8 @@ from app.services.daily_topics import (
 )
 from app.services.publications import PublicationService
 from app.runtime import AiTopicPreview, RuntimeState
-from app.workers.daily_topics import DailyTopicWorker
+from app.workers.daily_topics import DailyTopicPlannerWorker, DailyTopicWorker
+from zoneinfo import ZoneInfo
 from migrations.runner import migrate
 
 
@@ -94,6 +95,41 @@ class PublicationServiceTests(unittest.TestCase):
                 )).fetchone())["n"]
             self.assertEqual(count, 0)
 
+    def test_scheduled_ai_post_can_be_replaced_without_changing_time(self) -> None:
+        asyncio.run(self._scheduled_ai_post_can_be_replaced_without_changing_time())
+
+    async def _scheduled_ai_post_can_be_replaced_without_changing_time(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = await database_at(Path(directory) / "bot.sqlite3")
+            target = Target(0, "chat", "Чат", "-100123")
+            publications = PublicationService(database, (target,))
+            service = DailyTopicService(
+                SimpleNamespace(), publications, "chat"
+            )
+            scheduled = datetime.now(timezone.utc) + timedelta(hours=4)
+            post_id = await service.schedule(
+                DailyTopicPreparationTests._topic(),
+                creator_id=100,
+                scheduled_at=scheduled,
+                idempotency_key="replace-ai-topic",
+            )
+            before = await database.post(post_id)
+
+            replacement = DailyTopic(
+                title="Работа",
+                vocabulary_theme="Собеседование",
+                introduction="Обсудим поиск работы.",
+                questions=("Как найти работу?",),
+                vocabulary=(VocabularyItem("仕事", "しごと", "работа"),),
+                grammar=DailyTopicPreparationTests._topic().grammar,
+            )
+            self.assertTrue(await service.replace_scheduled(post_id, replacement))
+            after = await database.post(post_id)
+
+            self.assertEqual(after["scheduled_at"], before["scheduled_at"])
+            self.assertEqual(after["rich_message"]["blocks"][1]["text"],
+                             "Работа\n\nОбсудим поиск работы.")
+
 
 class DailyTopicPreparationTests(unittest.TestCase):
     @staticmethod
@@ -138,6 +174,11 @@ class DailyTopicPreparationTests(unittest.TestCase):
         self.assertEqual(call["target_keys"], ("ai_chat",))
         self.assertEqual(call["idempotency_key"], "daily-topic-job:10")
         self.assertIn("料理（りょうり）", call["text"])
+        rich = call["rich_message"]
+        self.assertEqual(rich["blocks"][0]["type"], "heading")
+        self.assertEqual(rich["blocks"][0]["text"], "🗣 Тема дня")
+        self.assertEqual(rich["blocks"][4]["type"], "details")
+        self.assertEqual(rich["blocks"][5]["type"], "details")
 
     def test_renderer_rejects_incomplete_topic(self) -> None:
         topic = DailyTopic(
@@ -216,12 +257,36 @@ class DailyTopicPreparationTests(unittest.TestCase):
                 TopicHistoryItem("Любимые блюда", "Приготовление еды")
             ])
 
+    def test_admin_generation_preferences_are_persistent(self) -> None:
+        asyncio.run(self._admin_generation_preferences_are_persistent())
+
+    async def _admin_generation_preferences_are_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = await database_at(Path(directory) / "bot.sqlite3")
+            repository = DailyTopicRepository(database)
+
+            self.assertEqual(
+                await repository.preferences(), TopicGenerationOptions("N3", None)
+            )
+            await repository.save_preferences(
+                TopicGenerationOptions("N2", "Поговорить о работе"), 100
+            )
+
+            reloaded = DailyTopicRepository(database)
+            self.assertEqual(
+                await reloaded.preferences(),
+                TopicGenerationOptions("N2", "Поговорить о работе"),
+            )
+
     def test_worker_passes_stable_idempotency_key(self) -> None:
         topic = self._topic()
         repository = SimpleNamespace(
             recent_history=AsyncMock(return_value=[
                 TopicHistoryItem("Путешествия", "Транспорт")
             ]),
+            preferences=AsyncMock(
+                return_value=TopicGenerationOptions("N3", "Бытовая тема")
+            ),
             mark_scheduled=AsyncMock(),
             mark_failed=AsyncMock(),
         )
@@ -247,6 +312,9 @@ class DailyTopicPreparationTests(unittest.TestCase):
         self.assertEqual(call["history"], [
             TopicHistoryItem("Путешествия", "Транспорт")
         ])
+        self.assertEqual(
+            call["options"], TopicGenerationOptions("N3", "Бытовая тема")
+        )
         repository.mark_scheduled.assert_awaited_once_with(
             8, 17, topic.as_json_value()
         )
@@ -322,16 +390,24 @@ class DailyTopicPreparationTests(unittest.TestCase):
         )
         repository = SimpleNamespace(
             recent_history=AsyncMock(return_value=[]),
+            preferences=AsyncMock(
+                return_value=TopicGenerationOptions("N3", None)
+            ),
             record_manual_publication=AsyncMock(return_value=7),
         )
         access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
         context = SimpleNamespace(
             state=RuntimeState(),
             settings=SimpleNamespace(ai_topics=SimpleNamespace()),
+            bot=SimpleNamespace(send_rich_message=AsyncMock()),
         )
         handlers = AiTopicHandlers(context, access, service, repository)
         status = SimpleNamespace(edit_text=AsyncMock())
-        message = SimpleNamespace(answer=AsyncMock(return_value=status), edit_text=AsyncMock())
+        message = SimpleNamespace(
+            answer=AsyncMock(return_value=status),
+            edit_text=AsyncMock(),
+            chat=SimpleNamespace(id=100),
+        )
         callback = SimpleNamespace(
             from_user=SimpleNamespace(id=100),
             message=message,
@@ -344,6 +420,7 @@ class DailyTopicPreparationTests(unittest.TestCase):
         service.generate.assert_awaited_once_with(
             [], TopicGenerationOptions("N3", None)
         )
+        context.bot.send_rich_message.assert_awaited_once()
         status.edit_text.assert_awaited_once()
 
         asyncio.run(handlers.publish(callback))
@@ -353,6 +430,44 @@ class DailyTopicPreparationTests(unittest.TestCase):
             25, topic.as_json_value()
         )
         self.assertNotIn(100, context.state.ai_topic_previews)
+
+    def test_planner_enqueues_next_publication_immediately(self) -> None:
+        repository = SimpleNamespace(enqueue=AsyncMock(return_value=11))
+        planner = DailyTopicPlannerWorker(
+            repository,
+            publish_time=time(10, 0),
+            timezone_value=ZoneInfo("Europe/Moscow"),
+        )
+        now = datetime(2026, 9, 27, 6, 0, tzinfo=timezone.utc)
+
+        result = asyncio.run(planner.plan(now))
+
+        self.assertEqual(result, 11)
+        calls = repository.enqueue.await_args_list
+        self.assertEqual(calls[0].args[0], datetime(
+            2026, 9, 27, 7, 0, tzinfo=timezone.utc
+        ))
+        self.assertEqual(
+            calls[0].kwargs["available_at"],
+            now,
+        )
+        self.assertEqual(repository.enqueue.await_count, 1)
+
+    def test_planner_skips_elapsed_time_and_plans_tomorrow(self) -> None:
+        repository = SimpleNamespace(enqueue=AsyncMock(return_value=13))
+        planner = DailyTopicPlannerWorker(
+            repository,
+            publish_time=time(10, 0),
+            timezone_value=ZoneInfo("Europe/Moscow"),
+        )
+        now = datetime(2026, 9, 27, 8, 0, tzinfo=timezone.utc)
+
+        asyncio.run(planner.plan(now))
+
+        self.assertEqual(
+            repository.enqueue.await_args.args[0],
+            datetime(2026, 9, 28, 7, 0, tzinfo=timezone.utc),
+        )
 
 
 if __name__ == "__main__":

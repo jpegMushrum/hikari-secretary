@@ -32,19 +32,13 @@ class AiTopicPreview:
 
 
 @dataclass(slots=True)
-class AiTopicAdminOptions:
-    jlpt_level: str
-    comment: str | None = None
-    awaiting_comment: bool = False
-
-
-@dataclass(slots=True)
 class RuntimeState:
     albums: dict[tuple[int, str], AlbumBuffer] = field(default_factory=dict)
     awaiting_schedule: dict[int, int] = field(default_factory=dict)
     awaiting_event: dict[int, EventSetup] = field(default_factory=dict)
     ai_topic_previews: dict[int, AiTopicPreview] = field(default_factory=dict)
-    ai_topic_options: dict[int, AiTopicAdminOptions] = field(default_factory=dict)
+    awaiting_ai_comment: set[int] = field(default_factory=set)
+    awaiting_ai_revision: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

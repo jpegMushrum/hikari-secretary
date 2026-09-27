@@ -28,6 +28,7 @@ from .repositories.daily_topics import DailyTopicRepository
 from .integrations.deepseek import DeepSeekTopicProvider
 from .workers.scheduler import SchedulerWorker
 from .workers.base import BackgroundWorker
+from .workers.daily_topics import DailyTopicPlannerWorker, DailyTopicWorker
 
 log = logging.getLogger(__name__)
 
@@ -69,9 +70,21 @@ class SecretaryBot:
         # The catch-all content handler must be registered after specific commands.
         inbox.register(self.router)
 
-        self.workers: tuple[BackgroundWorker, ...] = (
-            SchedulerWorker(self.context),
-        )
+        workers: list[BackgroundWorker] = [SchedulerWorker(self.context)]
+        if topic_service and settings.ai_topics.auto_publish_time:
+            workers.extend((
+                DailyTopicPlannerWorker(
+                    topic_repository,
+                    publish_time=settings.ai_topics.auto_publish_time,
+                    timezone_value=settings.timezone,
+                ),
+                DailyTopicWorker(
+                    topic_repository,
+                    topic_service,
+                    creator_id=min(settings.admin_ids),
+                ),
+            ))
+        self.workers = tuple(workers)
         self.dispatcher.update.outer_middleware(UpdateLoggingMiddleware())
         self.dispatcher.include_router(self.router)
 
