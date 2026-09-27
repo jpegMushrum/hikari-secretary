@@ -16,12 +16,12 @@ def main() -> None:
     settings = load_settings()
     log.info(
         "Configuration loaded: admins=%s targets=%s timezone=%s scheduler_interval=%ss "
-        "event_reminder=%sh database=%s",
+        "reminder_options=%s database=%s",
         len(settings.admin_ids),
         len(settings.targets),
         settings.timezone_name,
         settings.scheduler_interval_seconds,
-        settings.event_reminder_hours,
+        settings.reminder_options_minutes,
         settings.database_path,
     )
     asyncio.run(SecretaryBot(settings).run())

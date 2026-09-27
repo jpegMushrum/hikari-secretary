@@ -72,7 +72,7 @@ class PublicationHandlers:
         user_id = message.from_user.id
         event_setup = self.context.state.awaiting_event.get(user_id)
         if event_setup and message.text:
-            await self._handle_event_time(message, event_setup)
+            await self._handle_event_setup(message, event_setup)
             return
         if user_id in self.context.state.awaiting_schedule and message.text:
             await self._handle_schedule_time(message)
@@ -91,13 +91,29 @@ class PublicationHandlers:
             return
         await self._create_draft([message])
 
-    async def _handle_event_time(self, message: Message, setup: EventSetup) -> None:
+    async def _handle_event_setup(self, message: Message, setup: EventSetup) -> None:
+        stage = "title" if setup.title is None else (
+            "start" if setup.starts_at is None else "end"
+        )
         log.info(
             "Event time input: admin_id=%s post_id=%s stage=%s",
             message.from_user.id,
             setup.post_id,
-            "start" if setup.starts_at is None else "end",
+            stage,
         )
+        if setup.title is None:
+            title = " ".join(message.text.strip().split())
+            if not 1 < len(title) <= 160:
+                await message.answer(
+                    "Введите название мероприятия длиной от 2 до 160 символов."
+                )
+                return
+            setup.title = title
+            await message.answer(
+                "Введите дату и время начала мероприятия в формате "
+                f"ДД.ММ.ГГГГ ЧЧ:ММ ({self.context.settings.timezone_name})."
+            )
+            return
         try:
             value = parse_schedule(message.text, self.context.settings.timezone)
         except ValueError as exc:
@@ -113,7 +129,9 @@ class PublicationHandlers:
         if value <= setup.starts_at:
             await message.answer("Окончание должно быть позже начала мероприятия.")
             return
-        if await self.context.db.set_event(setup.post_id, setup.starts_at, value):
+        if await self.context.db.set_event(
+            setup.post_id, setup.title, setup.starts_at, value
+        ):
             post_id = setup.post_id
             self.context.state.awaiting_event.pop(message.from_user.id, None)
             await message.answer("Регистрация добавлена к публикации.")
@@ -189,6 +207,7 @@ class PublicationHandlers:
         if post["event"]:
             event_status = (
                 "включена\n"
+                f"Название: {post['event']['title']}\n"
                 f"Начало: {format_local(post['event']['starts_at'], self.context.settings.timezone)}\n"
                 f"Окончание: {format_local(post['event']['ends_at'], self.context.settings.timezone)}"
             )
@@ -254,8 +273,7 @@ class PublicationHandlers:
         self.context.state.awaiting_schedule.pop(callback.from_user.id, None)
         self.context.state.awaiting_event[callback.from_user.id] = EventSetup(post_id)
         await callback.message.answer(
-            "Введите дату и время начала мероприятия в формате "
-            f"ДД.ММ.ГГГГ ЧЧ:ММ. Часовой пояс: {self.context.settings.timezone_name}."
+            "Введите название мероприятия длиной от 2 до 160 символов."
         )
         await callback.answer()
 

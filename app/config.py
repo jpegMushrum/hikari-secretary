@@ -28,7 +28,7 @@ class Settings:
     targets: tuple[Target, ...]
     scheduler_interval_seconds: int
     max_delivery_attempts: int
-    event_reminder_hours: int
+    reminder_options_minutes: tuple[int, ...]
 
 
 def _required(name: str) -> str:
@@ -92,6 +92,22 @@ def load_settings() -> Settings:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     media_dir.mkdir(parents=True, exist_ok=True)
 
+    reminder_options_raw = os.getenv(
+        "REMINDER_OPTIONS_MINUTES", "30,60,120,360,1440"
+    )
+    try:
+        reminder_options = tuple(dict.fromkeys(
+            int(value.strip())
+            for value in reminder_options_raw.split(",")
+            if value.strip()
+        ))
+    except ValueError as exc:
+        raise ValueError(
+            "REMINDER_OPTIONS_MINUTES должен содержать минуты через запятую"
+        ) from exc
+    if not reminder_options or any(value <= 0 for value in reminder_options):
+        raise ValueError("REMINDER_OPTIONS_MINUTES должен содержать положительные числа")
+
     return Settings(
         telegram_bot_token=_required("TELEGRAM_BOT_TOKEN"),
         admin_ids=admin_ids,
@@ -102,5 +118,5 @@ def load_settings() -> Settings:
         targets=_load_targets(targets_path),
         scheduler_interval_seconds=max(1, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "5"))),
         max_delivery_attempts=max(1, int(os.getenv("MAX_DELIVERY_ATTEMPTS", "5"))),
-        event_reminder_hours=max(1, int(os.getenv("EVENT_REMINDER_HOURS", "24"))),
+        reminder_options_minutes=reminder_options,
     )

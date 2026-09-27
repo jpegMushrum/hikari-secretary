@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-REQUIRED_SCHEMA_VERSION = 2
+REQUIRED_SCHEMA_VERSION = 3
 
 
 def utc_now() -> datetime:
@@ -30,6 +30,18 @@ class Delivery:
     media_paths: list[str]
     attempts: int
     event_enabled: bool = False
+
+
+@dataclass(slots=True)
+class Page:
+    items: list[dict]
+    page: int
+    page_size: int
+    total: int
+
+    @property
+    def pages(self) -> int:
+        return max(1, (self.total + self.page_size - 1) // self.page_size)
 
 
 class Database:
@@ -128,7 +140,12 @@ class Database:
                 "event": dict(event) if event else None,
             }
 
-    async def set_event(self, post_id: int, starts_at: datetime, ends_at: datetime) -> bool:
+    async def set_event(
+        self, post_id: int, title: str, starts_at: datetime, ends_at: datetime
+    ) -> bool:
+        title = " ".join(title.strip().split())
+        if not title or len(title) > 160:
+            return False
         if ends_at <= starts_at:
             return False
         async with self.connect() as db:
@@ -138,12 +155,15 @@ class Database:
             if not post or post["status"] != "draft":
                 return False
             await db.execute(
-                """INSERT INTO events(post_id,starts_at,ends_at,created_at) VALUES(?,?,?,?)
+                """INSERT INTO events(post_id,title,starts_at,ends_at,created_at)
+                   VALUES(?,?,?,?,?)
                    ON CONFLICT(post_id) DO UPDATE SET
-                       starts_at=excluded.starts_at, ends_at=excluded.ends_at,
+                       title=excluded.title, starts_at=excluded.starts_at,
+                       ends_at=excluded.ends_at,
                        status='active', cancelled_at=NULL""",
                 (
                     post_id,
+                    title,
                     starts_at.astimezone(timezone.utc).isoformat(),
                     ends_at.astimezone(timezone.utc).isoformat(),
                     utc_now().isoformat(),
@@ -323,6 +343,32 @@ class Database:
             )
             await db.commit()
 
+    async def update_profile_answers(
+        self,
+        user_id: int,
+        *,
+        is_russian_citizen: bool | None = None,
+        is_itmo_student: bool | None = None,
+    ) -> None:
+        assignments: list[str] = []
+        values: list[int | str] = []
+        if is_russian_citizen is not None:
+            assignments.append("is_russian_citizen=?")
+            values.append(int(is_russian_citizen))
+        if is_itmo_student is not None:
+            assignments.append("is_itmo_student=?")
+            values.append(int(is_itmo_student))
+        if not assignments:
+            return
+        assignments.append("updated_at=?")
+        values.extend((utc_now().isoformat(), user_id))
+        async with self.connect() as db:
+            await db.execute(
+                f"UPDATE user_profiles SET {','.join(assignments)} WHERE user_id=?",
+                values,
+            )
+            await db.commit()
+
     async def begin_profile_edit(self, user_id: int) -> None:
         async with self.connect() as db:
             await db.execute(
@@ -341,6 +387,14 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
+    async def update_profile_edit(self, user_id: int, stage: str) -> None:
+        async with self.connect() as db:
+            await db.execute(
+                "UPDATE profile_edit_flows SET stage=?,updated_at=? WHERE user_id=?",
+                (stage, utc_now().isoformat(), user_id),
+            )
+            await db.commit()
+
     async def delete_profile_edit(self, user_id: int) -> None:
         async with self.connect() as db:
             await db.execute("DELETE FROM profile_edit_flows WHERE user_id=?", (user_id,))
@@ -353,7 +407,7 @@ class Database:
                    VALUES(?,?,?,?)
                    ON CONFLICT(user_id) DO UPDATE SET
                        post_id=excluded.post_id, stage=excluded.stage,
-                       surname=NULL, updated_at=excluded.updated_at""",
+                       surname=NULL,updated_at=excluded.updated_at""",
                 (user_id, post_id, stage, utc_now().isoformat()),
             )
             await db.commit()
@@ -397,7 +451,7 @@ class Database:
         now = utc_now().isoformat()
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT e.post_id,e.starts_at,e.ends_at,p.text
+                """SELECT e.post_id,e.title,e.starts_at,e.ends_at,p.text
                    FROM events e JOIN posts p ON p.id=e.post_id
                    WHERE e.status='active' AND e.starts_at>?
                      AND EXISTS (
@@ -414,6 +468,37 @@ class Database:
             )).fetchall()
             return [dict(row) for row in rows]
 
+    async def available_events_page(
+        self, user_id: int, page: int, page_size: int = 5
+    ) -> Page:
+        page = max(0, page)
+        now = utc_now().isoformat()
+        condition = """e.status='active' AND e.starts_at>?
+            AND EXISTS (
+                SELECT 1 FROM deliveries d
+                WHERE d.post_id=e.post_id AND d.status='sent'
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM registrations r
+                WHERE r.post_id=e.post_id AND r.user_id=?
+                  AND r.status='registered'
+            )"""
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                f"SELECT COUNT(*) AS n FROM events e WHERE {condition}",
+                (now, user_id),
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            rows = await (await db.execute(
+                f"""SELECT e.post_id,e.title,e.starts_at,e.ends_at,p.text
+                    FROM events e JOIN posts p ON p.id=e.post_id
+                    WHERE {condition}
+                    ORDER BY e.starts_at,e.post_id LIMIT ? OFFSET ?""",
+                (now, user_id, page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
+
     async def registration(self, user_id: int, post_id: int) -> dict | None:
         async with self.connect() as db:
             row = await (await db.execute(
@@ -422,22 +507,48 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
-    async def register(self, user_id: int, post_id: int, reminders_enabled: bool) -> bool:
-        if not await self.event_for_registration(post_id):
+    async def register(
+        self,
+        user_id: int,
+        post_id: int,
+        reminder_offset_minutes: int | None,
+    ) -> bool:
+        profile = await self.profile(user_id)
+        if not profile or any(
+            profile[field] is None
+            for field in ("is_russian_citizen", "is_itmo_student")
+        ):
             return False
+        event = await self.event_for_registration(post_id)
+        if not event:
+            return False
+        if reminder_offset_minutes is not None:
+            remind_at = datetime.fromisoformat(event["starts_at"]) - timedelta(
+                minutes=reminder_offset_minutes
+            )
+            if remind_at <= utc_now():
+                return False
         now = utc_now().isoformat()
         async with self.connect() as db:
             await db.execute(
                 """INSERT INTO registrations(
-                       post_id,user_id,reminders_enabled,status,registered_at
-                   ) VALUES(?,?,?,'registered',?)
+                       post_id,user_id,reminders_enabled,
+                       reminder_offset_minutes,status,registered_at
+                   ) VALUES(?,?,?,?,'registered',?)
                    ON CONFLICT(post_id,user_id) DO UPDATE SET
                        reminders_enabled=excluded.reminders_enabled,
+                       reminder_offset_minutes=excluded.reminder_offset_minutes,
                        status='registered', registered_at=excluded.registered_at,
                        cancelled_at=NULL, reminder_sent_at=NULL,
                        attendance_prompt_sent_at=NULL, attended=NULL,
                        attendance_recorded_at=NULL""",
-                (post_id, user_id, int(reminders_enabled), now),
+                (
+                    post_id,
+                    user_id,
+                    int(reminder_offset_minutes is not None),
+                    reminder_offset_minutes,
+                    now,
+                ),
             )
             await db.commit()
             return True
@@ -445,8 +556,9 @@ class Database:
     async def user_registrations(self, user_id: int) -> list[dict]:
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT r.post_id,r.status,r.reminders_enabled,r.attended,
-                          e.starts_at,e.ends_at,p.text
+                """SELECT r.post_id,r.status,r.reminders_enabled,
+                          r.reminder_offset_minutes,r.attended,
+                          e.title,e.starts_at,e.ends_at,p.text
                    FROM registrations r
                    JOIN events e ON e.post_id=r.post_id
                    JOIN posts p ON p.id=r.post_id
@@ -456,6 +568,34 @@ class Database:
                 (user_id, utc_now().isoformat()),
             )).fetchall()
             return [dict(row) for row in rows]
+
+    async def user_registrations_page(
+        self, user_id: int, page: int, page_size: int = 5
+    ) -> Page:
+        page = max(0, page)
+        now = utc_now().isoformat()
+        condition = """r.user_id=? AND r.status='registered'
+            AND e.status='active' AND e.starts_at>?"""
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                f"""SELECT COUNT(*) AS n FROM registrations r
+                    JOIN events e ON e.post_id=r.post_id WHERE {condition}""",
+                (user_id, now),
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            rows = await (await db.execute(
+                f"""SELECT r.post_id,r.status,r.reminders_enabled,
+                           r.reminder_offset_minutes,r.attended,
+                           e.title,e.starts_at,e.ends_at,p.text
+                    FROM registrations r
+                    JOIN events e ON e.post_id=r.post_id
+                    JOIN posts p ON p.id=r.post_id
+                    WHERE {condition}
+                    ORDER BY e.starts_at,e.post_id LIMIT ? OFFSET ?""",
+                (user_id, now, page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
 
     async def cancel_registration(self, user_id: int, post_id: int) -> bool:
         async with self.connect() as db:
@@ -476,7 +616,7 @@ class Database:
         time_condition = "e.ends_at<=?" if past else "e.ends_at>?"
         async with self.connect() as db:
             rows = await (await db.execute(
-                f"""SELECT e.post_id,e.starts_at,e.ends_at,e.status,p.text,
+                f"""SELECT e.post_id,e.title,e.starts_at,e.ends_at,e.status,p.text,
                           COUNT(CASE WHEN r.status='registered' THEN 1 END) AS registrations
                    FROM events e JOIN posts p ON p.id=e.post_id
                    LEFT JOIN registrations r ON r.post_id=e.post_id
@@ -490,6 +630,37 @@ class Database:
             )).fetchall()
             return [dict(row) for row in rows]
 
+    async def admin_events_page(
+        self, past: bool, page: int, page_size: int = 5
+    ) -> Page:
+        page = max(0, page)
+        time_condition = "e.ends_at<=?" if past else "e.ends_at>?"
+        condition = f"""e.status='active' AND {time_condition}
+            AND EXISTS (
+                SELECT 1 FROM deliveries d
+                WHERE d.post_id=e.post_id AND d.status='sent'
+            )"""
+        now = utc_now().isoformat()
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                f"SELECT COUNT(*) AS n FROM events e WHERE {condition}", (now,)
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            order = "DESC" if past else "ASC"
+            rows = await (await db.execute(
+                f"""SELECT e.post_id,e.title,e.starts_at,e.ends_at,e.status,p.text,
+                           COUNT(CASE WHEN r.status='registered' THEN 1 END) AS registrations
+                    FROM events e JOIN posts p ON p.id=e.post_id
+                    LEFT JOIN registrations r ON r.post_id=e.post_id
+                    WHERE {condition}
+                    GROUP BY e.post_id
+                    ORDER BY e.starts_at {order},e.post_id {order}
+                    LIMIT ? OFFSET ?""",
+                (now, page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
+
     async def cancel_event(self, post_id: int) -> list[dict] | None:
         async with self.connect() as db:
             await db.execute("BEGIN IMMEDIATE")
@@ -502,8 +673,10 @@ class Database:
                 await db.rollback()
                 return None
             rows = await (await db.execute(
-                """SELECT r.user_id,p.text
-                   FROM registrations r JOIN posts p ON p.id=r.post_id
+                """SELECT r.user_id,e.title,p.text
+                   FROM registrations r
+                   JOIN posts p ON p.id=r.post_id
+                   JOIN events e ON e.post_id=r.post_id
                    WHERE r.post_id=? AND r.status='registered'""",
                 (post_id,),
             )).fetchall()
@@ -513,9 +686,11 @@ class Database:
     async def event_registrations(self, post_id: int) -> list[dict]:
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT r.user_id,r.registered_at,r.reminders_enabled,r.status,r.attended,
+                """SELECT r.user_id,r.registered_at,r.reminders_enabled,
+                          r.reminder_offset_minutes,r.status,r.attended,
                           u.full_name,u.telegram_username,u.telegram_first_name,
-                          u.telegram_last_name
+                          u.telegram_last_name,u.is_russian_citizen,
+                          u.is_itmo_student
                    FROM registrations r
                    JOIN user_profiles u ON u.user_id=r.user_id
                    WHERE r.post_id=?
@@ -524,20 +699,24 @@ class Database:
             )).fetchall()
             return [dict(row) for row in rows]
 
-    async def due_reminders(self, reminder_hours: int = 24) -> list[dict]:
+    async def due_reminders(self) -> list[dict]:
         now = utc_now()
-        horizon = (now + timedelta(hours=reminder_hours)).isoformat()
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT r.post_id,r.user_id,e.starts_at,p.text
+                """SELECT r.post_id,r.user_id,r.reminder_offset_minutes,
+                          e.title,e.starts_at,p.text
                    FROM registrations r
                    JOIN events e ON e.post_id=r.post_id
                    JOIN posts p ON p.id=r.post_id
                    WHERE r.status='registered' AND r.reminders_enabled=1
                      AND r.reminder_sent_at IS NULL
                      AND e.status='active'
-                     AND e.starts_at>? AND e.starts_at<=?""",
-                (now.isoformat(), horizon),
+                     AND e.starts_at>?
+                     AND r.reminder_offset_minutes IS NOT NULL
+                     AND datetime(e.starts_at) <= datetime(
+                         ?, '+' || r.reminder_offset_minutes || ' minutes'
+                     )""",
+                (now.isoformat(), now.isoformat()),
             )).fetchall()
             return [dict(row) for row in rows]
 
@@ -552,7 +731,7 @@ class Database:
     async def due_attendance_prompts(self) -> list[dict]:
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT r.post_id,r.user_id,p.text
+                """SELECT r.post_id,r.user_id,e.title,p.text
                    FROM registrations r
                    JOIN events e ON e.post_id=r.post_id
                    JOIN posts p ON p.id=r.post_id

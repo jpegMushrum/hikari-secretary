@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 
-LATEST_VERSION = 2
+LATEST_VERSION = 3
 
 
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -143,9 +143,54 @@ def migration_002_profile_v2(db: sqlite3.Connection) -> None:
     db.execute("DELETE FROM profile_edit_flows")
 
 
+def migration_003_events_and_registration_preferences(db: sqlite3.Connection) -> None:
+    additions = {
+        "events": (("title", "TEXT"),),
+        "user_profiles": (
+            ("is_russian_citizen", "INTEGER"),
+            ("is_itmo_student", "INTEGER"),
+        ),
+        "registrations": (("reminder_offset_minutes", "INTEGER"),),
+    }
+    for table, columns in additions.items():
+        existing = _columns(db, table)
+        for name, definition in columns:
+            if name not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    db.execute(
+        """UPDATE events
+           SET title=COALESCE(
+               NULLIF(SUBSTR(TRIM((SELECT p.text FROM posts p WHERE p.id=events.post_id)), 1, 160), ''),
+               'Мероприятие #' || post_id
+           )
+           WHERE title IS NULL OR TRIM(title)=''"""
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_status_starts "
+        "ON events(status, starts_at)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_status_ends "
+        "ON events(status, ends_at)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_registrations_reminders "
+        "ON registrations(status, reminders_enabled, reminder_sent_at)"
+    )
+    # Unfinished dialogs are not durable user data and may reference an old flow.
+    db.execute("DELETE FROM registration_flows")
+    db.execute("DELETE FROM profile_edit_flows")
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "baseline", migration_001_baseline),
     (2, "profile_v2", migration_002_profile_v2),
+    (
+        3,
+        "events_and_registration_preferences",
+        migration_003_events_and_registration_preferences,
+    ),
 )
 
 

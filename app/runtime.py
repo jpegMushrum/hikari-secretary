@@ -20,6 +20,7 @@ class AlbumBuffer:
 @dataclass(slots=True)
 class EventSetup:
     post_id: int
+    title: str | None = None
     starts_at: datetime | None = None
 
 

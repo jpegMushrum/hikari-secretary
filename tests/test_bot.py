@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 from app.access import AdminAccess
 from app.handlers.registrations import RegistrationHandlers
-from app.presentation import telegram_profile_label
+from app.presentation import reminder_offset_label, telegram_profile_label
 
 
 def make_access(*admin_ids: int) -> AdminAccess:
@@ -50,14 +50,10 @@ class AccessAndPresentationTests(unittest.TestCase):
         self.assertTrue(allowed)
         message.answer.assert_not_awaited()
 
-    def test_reminder_question_uses_configured_hours(self) -> None:
-        context = SimpleNamespace(settings=SimpleNamespace(event_reminder_hours=2))
-        handlers = RegistrationHandlers(context, None)
-
-        self.assertEqual(
-            handlers.reminder_question(),
-            "Напомнить вам о мероприятии за 2 ч. до начала?",
-        )
+    def test_reminder_offset_is_human_readable(self) -> None:
+        self.assertEqual(reminder_offset_label(30), "за 30 мин.")
+        self.assertEqual(reminder_offset_label(120), "за 2 ч.")
+        self.assertEqual(reminder_offset_label(1440), "за 1 дн.")
 
     def test_telegram_profile_prefers_username(self) -> None:
         self.assertEqual(

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db import Database
-from migrations.runner import migrate
+from migrations.runner import migration_001_baseline, migration_002_profile_v2, migrate
 
 
 async def migrated_database(path: Path) -> Database:
@@ -17,6 +17,65 @@ async def migrated_database(path: Path) -> Database:
 
 
 class DatabaseTests(unittest.TestCase):
+    def test_v3_migration_backfills_event_title_and_preserves_registration(self):
+        asyncio.run(self._v3_migration_backfills_event_title_and_preserves_registration())
+
+    async def _v3_migration_backfills_event_title_and_preserves_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL
+                    )"""
+                )
+                migration_001_baseline(connection)
+                migration_002_profile_v2(connection)
+                now = datetime.now(timezone.utc)
+                connection.execute(
+                    """INSERT INTO posts(id,creator_id,text,created_at,status)
+                       VALUES(1,1,'Старое название','now','sent')"""
+                )
+                connection.execute(
+                    """INSERT INTO events(post_id,starts_at,ends_at,created_at)
+                       VALUES(1,?,?,?)""",
+                    (
+                        (now + timedelta(hours=2)).isoformat(),
+                        (now + timedelta(hours=3)).isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO user_profiles(
+                        user_id,surname,given_name,full_name,created_at,updated_at
+                    ) VALUES(5,'','','Пользователь','now','now')"""
+                )
+                connection.execute(
+                    """INSERT INTO registrations(
+                        post_id,user_id,reminders_enabled,status,registered_at
+                    ) VALUES(1,5,1,'registered','now')"""
+                )
+                connection.executemany(
+                    "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,'now')",
+                    [(1, "baseline"), (2, "profile_v2")],
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            migrate(path, create_backup=False)
+            db = Database(path)
+            await db.initialize()
+            post = await db.post(1)
+            self.assertEqual(post["event"]["title"], "Старое название")
+            registration = await db.registration(5, 1)
+            self.assertEqual(registration["reminders_enabled"], 1)
+            self.assertIsNone(registration["reminder_offset_minutes"])
+            profile = await db.profile(5)
+            self.assertIsNone(profile["is_russian_citizen"])
+            self.assertIsNone(profile["is_itmo_student"])
+
     def test_existing_profiles_are_migrated_without_data_loss(self):
         asyncio.run(self._existing_profiles_are_migrated_without_data_loss())
 
@@ -93,6 +152,36 @@ class DatabaseTests(unittest.TestCase):
             await db.mark_notified(post_id)
             self.assertEqual(await db.terminal_notifications(), [])
 
+    def test_event_pages_are_bounded_and_stably_ordered(self):
+        asyncio.run(self._event_pages_are_bounded_and_stably_ordered())
+
+    async def _event_pages_are_bounded_and_stably_ordered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            now = datetime.now(timezone.utc)
+            created: list[int] = []
+            for index in range(7):
+                post_id = await db.create_post(1, f"Пост {index}", [], [])
+                created.append(post_id)
+                await db.toggle_delivery(post_id, "channel", "Канал", "-100")
+                start = now + timedelta(days=index + 1)
+                await db.set_event(
+                    post_id, f"Мероприятие {index}", start, start + timedelta(hours=1)
+                )
+                await db.schedule(post_id, now)
+                delivery = await db.claim_due()
+                await db.delivery_succeeded(delivery.id, str(index))
+
+            first = await db.available_events_page(99, 0, page_size=5)
+            second = await db.available_events_page(99, 1, page_size=5)
+            self.assertEqual(first.total, 7)
+            self.assertEqual(first.pages, 2)
+            self.assertEqual(len(first.items), 5)
+            self.assertEqual(len(second.items), 2)
+            self.assertEqual(
+                [row["post_id"] for row in first.items + second.items], created
+            )
+
     def test_event_registration_lifecycle(self):
         asyncio.run(self._event_registration_lifecycle())
 
@@ -126,7 +215,9 @@ class DatabaseTests(unittest.TestCase):
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(hours=12)
             ends_at = starts_at + timedelta(hours=2)
-            self.assertTrue(await db.set_event(post_id, starts_at, ends_at))
+            self.assertTrue(await db.set_event(
+                post_id, "Японский разговорный клуб", starts_at, ends_at
+            ))
             self.assertTrue(await db.schedule(post_id, datetime.now(timezone.utc)))
             delivery = await db.claim_due()
             self.assertTrue(delivery.event_enabled)
@@ -136,15 +227,26 @@ class DatabaseTests(unittest.TestCase):
 
             await db.begin_registration_flow(200, post_id, "full_name")
             await db.save_profile(200, "Иван Иванов", "ivan", "Ваня", None)
+            await db.update_profile_answers(
+                200, is_russian_citizen=True, is_itmo_student=False
+            )
             await db.update_registration_flow(200, "reminder")
-            self.assertTrue(await db.register(200, post_id, True))
+            self.assertTrue(await db.register(200, post_id, 120))
             await db.delete_registration_flow(200)
             self.assertEqual(await db.available_events(200), [])
 
             registrations = await db.user_registrations(200)
             self.assertEqual(len(registrations), 1)
-            self.assertEqual(await db.due_reminders(2), [])
-            self.assertEqual(len(await db.due_reminders()), 1)
+            self.assertEqual(await db.due_reminders(), [])
+            async with db.connect() as connection:
+                await connection.execute(
+                    "UPDATE events SET starts_at=? WHERE post_id=?",
+                    ((datetime.now(timezone.utc) + timedelta(minutes=90)).isoformat(), post_id),
+                )
+                await connection.commit()
+            due = await db.due_reminders()
+            self.assertEqual(len(due), 1)
+            self.assertEqual(due[0]["reminder_offset_minutes"], 120)
             await db.mark_reminder_sent(200, post_id)
             self.assertEqual(await db.due_reminders(), [])
 
@@ -158,6 +260,8 @@ class DatabaseTests(unittest.TestCase):
             participants = await db.event_registrations(post_id)
             self.assertEqual(participants[0]["full_name"], "Иван Петров")
             self.assertEqual(participants[0]["telegram_first_name"], "Пирожок")
+            self.assertEqual(participants[0]["is_russian_citizen"], 1)
+            self.assertEqual(participants[0]["is_itmo_student"], 0)
             self.assertTrue(await db.cancel_registration(200, post_id))
             self.assertEqual(await db.user_registrations(200), [])
             available = await db.available_events(200)
@@ -175,12 +279,15 @@ class DatabaseTests(unittest.TestCase):
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(minutes=10)
             ends_at = starts_at + timedelta(hours=1)
-            await db.set_event(post_id, starts_at, ends_at)
+            await db.set_event(post_id, "Встреча", starts_at, ends_at)
             await db.schedule(post_id, datetime.now(timezone.utc))
             delivery = await db.claim_due()
             await db.delivery_succeeded(delivery.id, "11")
             await db.save_profile(201, "Анна Петрова", "anna", "Анна", "Петрова")
-            self.assertTrue(await db.register(201, post_id, False))
+            await db.update_profile_answers(
+                201, is_russian_citizen=False, is_itmo_student=True
+            )
+            self.assertTrue(await db.register(201, post_id, None))
 
             async with db.connect() as connection:
                 await connection.execute(
@@ -207,17 +314,23 @@ class DatabaseTests(unittest.TestCase):
             post_id = await db.create_post(100, "Отменяемая встреча", [], [])
             await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
             starts_at = datetime.now(timezone.utc) + timedelta(hours=2)
-            await db.set_event(post_id, starts_at, starts_at + timedelta(hours=1))
+            await db.set_event(
+                post_id, "Отменяемая встреча",
+                starts_at, starts_at + timedelta(hours=1)
+            )
             await db.schedule(post_id, datetime.now(timezone.utc))
             delivery = await db.claim_due()
             await db.delivery_succeeded(delivery.id, "12")
             await db.save_profile(202, "Пётр Сидоров", None, "Пётр", "Сидоров")
-            await db.register(202, post_id, True)
+            await db.update_profile_answers(
+                202, is_russian_citizen=True, is_itmo_student=True
+            )
+            await db.register(202, post_id, 60)
             self.assertEqual(len(await db.admin_events()), 1)
 
             participants = await db.cancel_event(post_id)
             self.assertEqual(participants[0]["user_id"], 202)
-            self.assertEqual(await db.due_reminders(3), [])
+            self.assertEqual(await db.due_reminders(), [])
             self.assertEqual(await db.user_registrations(202), [])
             self.assertEqual(await db.admin_events(), [])
             self.assertEqual(await db.admin_events(past=True), [])

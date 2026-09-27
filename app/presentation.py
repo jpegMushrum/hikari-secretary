@@ -14,6 +14,24 @@ def post_title(text: str) -> str:
     return (clean[:77] + "...") if len(clean) > 80 else (clean or "Без названия")
 
 
+def event_title(event: dict) -> str:
+    title = " ".join((event.get("title") or "").strip().split())
+    return title or post_title(event.get("text") or "")
+
+
+def reminder_offset_label(minutes: int | None) -> str:
+    if minutes is None:
+        return "выключено"
+    if minutes < 60:
+        return f"за {minutes} мин."
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"за {days} дн."
+    if minutes % 60 == 0:
+        return f"за {minutes // 60} ч."
+    return f"за {minutes // 60} ч. {minutes % 60} мин."
+
+
 def telegram_identity_values(user: User) -> tuple[str | None, str | None, str | None]:
     return user.username, user.first_name, user.last_name
 

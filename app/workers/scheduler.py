@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from ..formatting import format_local
 from ..keyboards import attendance_keyboard, registration_cancel_keyboard
-from ..presentation import friendly_delivery_error, post_title, remove_media
+from ..presentation import event_title, friendly_delivery_error, remove_media
 from ..publishers import TelegramPublisher
 from ..runtime import AppContext
 
@@ -77,16 +77,14 @@ class SchedulerWorker:
             await self._notify_admin(delivery.creator_id, text)
 
     async def _send_due_reminders(self) -> None:
-        reminders = await self.context.db.due_reminders(
-            self.context.settings.event_reminder_hours
-        )
+        reminders = await self.context.db.due_reminders()
         if reminders:
             log.info("Due event reminders found: count=%s", len(reminders))
         for reminder in reminders:
             try:
                 await self.context.bot.send_message(
                     reminder["user_id"],
-                    f"Напоминание: скоро начнётся мероприятие «{post_title(reminder['text'])}».\n"
+                    f"Напоминание: скоро начнётся мероприятие «{event_title(reminder)}».\n"
                     f"Начало: {format_local(reminder['starts_at'], self.context.settings.timezone)} "
                     f"({self.context.settings.timezone_name}).",
                     reply_markup=registration_cancel_keyboard(reminder["post_id"]),
@@ -117,7 +115,7 @@ class SchedulerWorker:
             try:
                 await self.context.bot.send_message(
                     attendance["user_id"],
-                    f"Вы посетили мероприятие «{post_title(attendance['text'])}»?",
+                    f"Вы посетили мероприятие «{event_title(attendance)}»?",
                     reply_markup=attendance_keyboard(attendance["post_id"]),
                 )
                 await self.context.db.mark_attendance_prompt_sent(
