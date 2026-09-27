@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..db import Database
+from ..services.daily_topics import TopicHistoryItem
 
 
 def utc_now() -> datetime:
@@ -122,20 +123,55 @@ class DailyTopicRepository:
             if cursor.rowcount != 1:
                 raise RuntimeError("AI-задание уже не находится в обработке")
 
-    async def recent_titles(self, limit: int = 30) -> list[str]:
+    async def recent_history(
+        self, limit: int | None = None
+    ) -> list[TopicHistoryItem]:
+        limit_sql = " LIMIT ?" if limit is not None else ""
+        parameters = (max(1, limit),) if limit is not None else ()
         async with self.db.connect() as connection:
             rows = await (await connection.execute(
                 """SELECT topic_json FROM ai_topic_jobs
                    WHERE status='scheduled' AND topic_json IS NOT NULL
-                   ORDER BY scheduled_for DESC LIMIT ?""",
-                (limit,),
+                   ORDER BY scheduled_for DESC""" + limit_sql,
+                parameters,
             )).fetchall()
-        titles: list[str] = []
+        history: list[TopicHistoryItem] = []
         for row in rows:
             try:
-                title = str(json.loads(row["topic_json"])["title"]).strip()
+                topic = json.loads(row["topic_json"])
+                title = str(topic["title"]).strip()
+                vocabulary_theme = str(topic["vocabulary_theme"]).strip()
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
-            if title:
-                titles.append(title)
-        return titles
+            if title and vocabulary_theme:
+                history.append(TopicHistoryItem(title, vocabulary_theme))
+        return history
+
+    async def record_manual_publication(
+        self, post_id: int, topic: dict, prompt_version: str = "admin-v1"
+    ) -> int:
+        """Persist a manually approved topic in history, idempotently by post."""
+        now = utc_now().isoformat()
+        async with self.db.connect() as connection:
+            existing = await (await connection.execute(
+                "SELECT id FROM ai_topic_jobs WHERE post_id=?", (post_id,)
+            )).fetchone()
+            if existing:
+                return int(existing["id"])
+            cursor = await connection.execute(
+                """INSERT INTO ai_topic_jobs(
+                       scheduled_for,status,attempts,next_attempt_at,prompt_version,
+                       topic_json,post_id,created_at,updated_at
+                   ) VALUES(?,'scheduled',1,?,?,?,?,?,?)""",
+                (
+                    now,
+                    now,
+                    prompt_version,
+                    json.dumps(topic, ensure_ascii=False),
+                    post_id,
+                    now,
+                    now,
+                ),
+            )
+            await connection.commit()
+            return int(cursor.lastrowid)

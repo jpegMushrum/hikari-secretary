@@ -76,6 +76,19 @@ def user_menu_keyboard(show_admin_return: bool = False) -> InlineKeyboardMarkup:
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
+            text="📅 Мероприятия и публикации", callback_data="admin_events_menu"
+        )],
+        [InlineKeyboardButton(text="🤖 ИИ", callback_data="admin_ai_menu")],
+        [InlineKeyboardButton(
+            text="👤 Интерфейс пользователя", callback_data="show_user_interface"
+        )],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="admin_help")],
+    ])
+
+
+def admin_events_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
             text="✍️ Создать публикацию", callback_data="admin_new_post"
         )],
         [
@@ -84,11 +97,59 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
                 text="👥 Мероприятия", callback_data="admin_registrations"
             ),
         ],
-        [InlineKeyboardButton(
-            text="👤 Интерфейс пользователя", callback_data="show_user_interface"
-        )],
-        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="admin_help")],
+        [InlineKeyboardButton(text="← Панель администратора", callback_data="admin_home")],
     ])
+
+
+def admin_ai_menu_keyboard(
+    configured: bool,
+    selected_level: str = "N3",
+    has_comment: bool = False,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if configured:
+        rows.append([InlineKeyboardButton(
+            text="✨ Сгенерировать тему", callback_data="ai_generate"
+        )])
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'✓ ' if level == selected_level else ''}{level}",
+                callback_data=f"ai_level:{level}",
+            )
+            for level in ("N5", "N4", "N3", "N2", "N1")
+        ])
+        rows.append([InlineKeyboardButton(
+            text="✏️ Изменить комментарий" if has_comment else "✏️ Добавить комментарий",
+            callback_data="ai_comment_request",
+        )])
+        if has_comment:
+            rows.append([InlineKeyboardButton(
+                text="🗑 Убрать комментарий", callback_data="ai_comment_clear"
+            )])
+    rows.append([InlineKeyboardButton(
+        text="← Панель администратора", callback_data="admin_home"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def ai_topic_preview_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🚀 Опубликовать", callback_data="ai_publish"
+        )],
+        [InlineKeyboardButton(
+            text="🔄 Перегенерировать", callback_data="ai_regenerate"
+        )],
+        [InlineKeyboardButton(text="✖ Отменить", callback_data="ai_cancel")],
+    ])
+
+
+def ai_comment_cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="✖ Отменить", callback_data="ai_comment_cancel"
+        )
+    ]])
 
 
 def _navigation_row(prefix: str, page: int, pages: int) -> list[InlineKeyboardButton]:
@@ -156,6 +217,9 @@ def admin_events_page_keyboard(
     rows.append([InlineKeyboardButton(
         text="Активные мероприятия" if past else "Прошедшие мероприятия",
         callback_data="admin_events_page:active:0" if past else "admin_events_page:past:0",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="← Мероприятия и публикации", callback_data="admin_events_menu"
     )])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

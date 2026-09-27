@@ -16,6 +16,22 @@ class Target:
     destination: str
     message_thread_id: int | None = None
 
+    def matches(self, chat_id: int, message_thread_id: int | None = None) -> bool:
+        """Return whether an incoming Telegram update belongs to this target."""
+        if self.destination != str(chat_id):
+            return False
+        if self.message_thread_id is None:
+            return True
+        return self.message_thread_id == message_thread_id
+
+
+@dataclass(frozen=True, slots=True)
+class AiTopicSettings:
+    target: Target | None
+    question_count: int
+    vocabulary_count: int
+    grammar_count: int
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -29,6 +45,11 @@ class Settings:
     scheduler_interval_seconds: int
     max_delivery_attempts: int
     reminder_options_minutes: tuple[int, ...]
+    deepseek_api_key: str | None
+    deepseek_model: str
+    deepseek_base_url: str
+    deepseek_timeout_seconds: int
+    ai_topics: AiTopicSettings
 
 
 def _required(name: str) -> str:
@@ -108,6 +129,28 @@ def load_settings() -> Settings:
     if not reminder_options or any(value <= 0 for value in reminder_options):
         raise ValueError("REMINDER_OPTIONS_MINUTES должен содержать положительные числа")
 
+    targets = _load_targets(targets_path)
+    target_key = os.getenv("AI_TOPIC_TARGET_KEY", "").strip()
+    ai_target = next((target for target in targets if target.key == target_key), None)
+    if target_key and ai_target is None:
+        raise ValueError(
+            f"AI_TOPIC_TARGET_KEY ссылается на неизвестную цель: {target_key}"
+        )
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or None
+    if deepseek_api_key and ai_target is None:
+        raise ValueError(
+            "При заданном DEEPSEEK_API_KEY необходимо указать AI_TOPIC_TARGET_KEY"
+        )
+
+    def bounded_int(name: str, default: int, upper: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except ValueError as exc:
+            raise ValueError(f"{name} должен быть целым числом") from exc
+        if not 1 <= value <= upper:
+            raise ValueError(f"{name} должен быть от 1 до {upper}")
+        return value
+
     return Settings(
         telegram_bot_token=_required("TELEGRAM_BOT_TOKEN"),
         admin_ids=admin_ids,
@@ -115,8 +158,22 @@ def load_settings() -> Settings:
         timezone_name=timezone_name,
         database_path=database_path,
         media_dir=media_dir,
-        targets=_load_targets(targets_path),
+        targets=targets,
         scheduler_interval_seconds=max(1, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "5"))),
         max_delivery_attempts=max(1, int(os.getenv("MAX_DELIVERY_ATTEMPTS", "5"))),
         reminder_options_minutes=reminder_options,
+        deepseek_api_key=deepseek_api_key,
+        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip(),
+        deepseek_base_url=os.getenv(
+            "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
+        ).strip().rstrip("/"),
+        deepseek_timeout_seconds=max(
+            1, int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "90"))
+        ),
+        ai_topics=AiTopicSettings(
+            target=ai_target,
+            question_count=bounded_int("AI_TOPIC_QUESTION_COUNT", 5, 8),
+            vocabulary_count=bounded_int("AI_TOPIC_VOCABULARY_COUNT", 10, 20),
+            grammar_count=bounded_int("AI_TOPIC_GRAMMAR_COUNT", 3, 8),
+        ),
     )

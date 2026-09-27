@@ -5,7 +5,11 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from ..access import AdminAccess
-from ..keyboards import admin_menu_keyboard, user_menu_keyboard
+from ..keyboards import (
+    admin_events_menu_keyboard,
+    admin_menu_keyboard,
+    user_menu_keyboard,
+)
 from ..runtime import AppContext
 from .registrations import RegistrationHandlers
 
@@ -28,6 +32,9 @@ class CoreHandlers:
             self.show_user_interface, F.data == "show_user_interface"
         )
         router.callback_query.register(self.new_post, F.data == "admin_new_post")
+        router.callback_query.register(
+            self.admin_events_menu, F.data == "admin_events_menu"
+        )
         router.callback_query.register(self.help_button, F.data == "admin_help")
         router.callback_query.register(self.user_home, F.data == "user_home")
         router.callback_query.register(self.admin_home, F.data == "admin_home")
@@ -49,13 +56,19 @@ class CoreHandlers:
     async def _send_admin_home(self, send) -> None:
         await send(
             "⚙️ Панель администратора\n\n"
-            "Отправьте текст, фотографию с подписью или альбом. Затем выберите цели и время публикации.\n\n"
-            "/queue — запланированные публикации\n"
-            "/registrations — мероприятия и участники\n"
+            "Выберите раздел: мероприятия и публикации либо генерация материалов через ИИ.\n\n"
             "/events — мои личные регистрации\n"
             "/profile — настройка пользовательского профиля\n"
             "/help — помощь",
             reply_markup=admin_menu_keyboard(),
+        )
+
+    async def _send_admin_events_menu(self, send) -> None:
+        await send(
+            "📅 Мероприятия и публикации\n\n"
+            "Здесь можно создать публикацию, посмотреть очередь и управлять "
+            "мероприятиями и участниками.",
+            reply_markup=admin_events_menu_keyboard(),
         )
 
     async def _send_user_home(self, send, is_admin: bool) -> None:
@@ -85,6 +98,12 @@ class CoreHandlers:
         if not await self.access.guard_callback(callback):
             return
         await self._send_admin_home(callback.message.edit_text)
+        await callback.answer()
+
+    async def admin_events_menu(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_admin_events_menu(callback.message.edit_text)
         await callback.answer()
 
     async def new_post(self, callback: CallbackQuery) -> None:

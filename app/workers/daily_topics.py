@@ -26,14 +26,12 @@ class DailyTopicWorker:
         service: DailyTopicService,
         *,
         creator_id: int,
-        target_keys: tuple[str, ...],
         poll_interval_seconds: int = 30,
         max_attempts: int = 5,
     ):
         self.repository = repository
         self.service = service
         self.creator_id = creator_id
-        self.target_keys = target_keys
         self.poll_interval_seconds = max(1, poll_interval_seconds)
         self.max_attempts = max(1, max_attempts)
 
@@ -57,11 +55,10 @@ class DailyTopicWorker:
             job.attempts,
         )
         try:
-            recent_titles = await self.repository.recent_titles()
+            history = await self.repository.recent_history()
             post_id, topic = await self.service.generate_and_schedule(
-                recent_titles=recent_titles,
+                history=history,
                 creator_id=self.creator_id,
-                target_keys=self.target_keys,
                 scheduled_at=max(job.scheduled_for, utc_now()),
                 idempotency_key=f"daily-topic-job:{job.id}",
             )

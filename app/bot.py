@@ -16,12 +16,16 @@ from .access import AdminAccess
 from .config import Settings
 from .db import Database
 from .handlers.core import CoreHandlers
+from .handlers.ai_topics import AiTopicHandlers
 from .handlers.inbox import InboxHandlers
 from .handlers.publications import PublicationHandlers
 from .handlers.registrations import RegistrationHandlers
 from .logging_middleware import UpdateLoggingMiddleware
 from .runtime import AppContext
 from .services.publications import PublicationService
+from .services.daily_topics import DailyTopicService
+from .repositories.daily_topics import DailyTopicRepository
+from .integrations.deepseek import DeepSeekTopicProvider
 from .workers.scheduler import SchedulerWorker
 from .workers.base import BackgroundWorker
 
@@ -40,16 +44,28 @@ class SecretaryBot:
 
         access = AdminAccess(self.context)
         publication_service = PublicationService(database, settings.targets)
+        topic_repository = DailyTopicRepository(database)
+        topic_service: DailyTopicService | None = None
+        if settings.deepseek_api_key and settings.ai_topics.target:
+            topic_service = DailyTopicService(
+                DeepSeekTopicProvider.from_settings(settings),
+                publication_service,
+                settings.ai_topics.target.key,
+            )
         registrations = RegistrationHandlers(self.context, access)
         publications = PublicationHandlers(
             self.context, access, publication_service
         )
         core = CoreHandlers(self.context, access, registrations)
-        inbox = InboxHandlers(registrations, publications)
+        ai_topics = AiTopicHandlers(
+            self.context, access, topic_service, topic_repository
+        )
+        inbox = InboxHandlers(registrations, publications, ai_topics)
 
         core.register(self.router)
         registrations.register(self.router)
         publications.register(self.router)
+        ai_topics.register(self.router)
         # The catch-all content handler must be registered after specific commands.
         inbox.register(self.router)
 

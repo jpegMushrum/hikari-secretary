@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -8,14 +9,20 @@ from unittest.mock import AsyncMock
 
 from app.config import Target
 from app.db import Database
+from app.integrations.deepseek import DeepSeekTopicProvider
+from app.handlers.ai_topics import AiTopicHandlers
 from app.repositories.daily_topics import DailyTopicJob, DailyTopicRepository
 from app.services.daily_topics import (
     DailyTopic,
     DailyTopicRenderer,
     DailyTopicService,
+    GrammarPoint,
+    TopicHistoryItem,
+    TopicGenerationOptions,
     VocabularyItem,
 )
 from app.services.publications import PublicationService
+from app.runtime import AiTopicPreview, RuntimeState
 from app.workers.daily_topics import DailyTopicWorker
 from migrations.runner import migrate
 
@@ -93,10 +100,17 @@ class DailyTopicPreparationTests(unittest.TestCase):
     def _topic() -> DailyTopic:
         return DailyTopic(
             title="Любимые блюда",
+            vocabulary_theme="Приготовление еды",
             introduction="Обсудим еду и вкусы.",
             questions=("Что вы любите готовить?",),
             vocabulary=(
                 VocabularyItem("料理", "りょうり", "блюдо; кулинария"),
+            ),
+            grammar=(
+                GrammarPoint(
+                    "〜ことが好き", "любить что-либо", "料理することが好きです。",
+                    "Я люблю готовить.",
+                ),
             ),
         )
 
@@ -104,29 +118,56 @@ class DailyTopicPreparationTests(unittest.TestCase):
         topic = self._topic()
         provider = SimpleNamespace(generate=AsyncMock(return_value=topic))
         publications = SimpleNamespace(create_scheduled=AsyncMock(return_value=15))
-        service = DailyTopicService(provider, publications)
+        service = DailyTopicService(provider, publications, "ai_chat")
         when = datetime.now(timezone.utc) + timedelta(hours=1)
 
         post_id, generated = asyncio.run(service.generate_and_schedule(
-            recent_titles=("Путешествия",),
+            history=(TopicHistoryItem("Путешествия", "Транспорт"),),
             creator_id=100,
-            target_keys=("chat",),
             scheduled_at=when,
             idempotency_key="daily-topic-job:10",
         ))
 
         self.assertEqual(post_id, 15)
         self.assertEqual(generated, topic)
-        provider.generate.assert_awaited_once_with(("Путешествия",))
+        provider.generate.assert_awaited_once_with(
+            (TopicHistoryItem("Путешествия", "Транспорт"),), None
+        )
         call = publications.create_scheduled.await_args.kwargs
         self.assertEqual(call["source"], "ai_daily_topic")
+        self.assertEqual(call["target_keys"], ("ai_chat",))
         self.assertEqual(call["idempotency_key"], "daily-topic-job:10")
         self.assertIn("料理（りょうり）", call["text"])
 
     def test_renderer_rejects_incomplete_topic(self) -> None:
-        topic = DailyTopic("", "Описание", ("Вопрос?",), self._topic().vocabulary)
+        topic = DailyTopic(
+            title="",
+            vocabulary_theme="Тема",
+            introduction="Описание",
+            questions=("Вопрос?",),
+            vocabulary=self._topic().vocabulary,
+            grammar=self._topic().grammar,
+        )
         with self.assertRaisesRegex(ValueError, "Название"):
             DailyTopicRenderer().render(topic)
+
+    def test_service_rejects_repeated_vocabulary_theme(self) -> None:
+        topic = self._topic()
+        provider = SimpleNamespace(generate=AsyncMock(return_value=topic))
+        publications = SimpleNamespace(create_scheduled=AsyncMock())
+        service = DailyTopicService(provider, publications, "ai_chat")
+
+        with self.assertRaisesRegex(ValueError, "тему лексики"):
+            asyncio.run(service.generate_and_schedule(
+                history=(TopicHistoryItem(
+                    "Другая тема", "  ПРИГОТОВЛЕНИЕ   ЕДЫ "
+                ),),
+                creator_id=100,
+                scheduled_at=datetime.now(timezone.utc),
+                idempotency_key="daily-topic-job:11",
+            ))
+
+        publications.create_scheduled.assert_not_awaited()
 
     def test_job_queue_is_idempotent_and_keeps_topic_history(self) -> None:
         asyncio.run(self._job_queue_is_idempotent_and_keeps_topic_history())
@@ -150,12 +191,37 @@ class DailyTopicPreparationTests(unittest.TestCase):
             await repository.mark_scheduled(
                 job.id, post_id, self._topic().as_json_value()
             )
-            self.assertEqual(await repository.recent_titles(), ["Любимые блюда"])
+            self.assertEqual(await repository.recent_history(), [
+                TopicHistoryItem("Любимые блюда", "Приготовление еды")
+            ])
+
+    def test_manual_publication_is_recorded_in_history_idempotently(self) -> None:
+        asyncio.run(self._manual_publication_is_recorded_in_history_idempotently())
+
+    async def _manual_publication_is_recorded_in_history_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = await database_at(Path(directory) / "bot.sqlite3")
+            repository = DailyTopicRepository(database)
+            post_id = await database.create_post(100, "Тема", [], [])
+
+            first = await repository.record_manual_publication(
+                post_id, self._topic().as_json_value()
+            )
+            second = await repository.record_manual_publication(
+                post_id, self._topic().as_json_value()
+            )
+
+            self.assertEqual(first, second)
+            self.assertEqual(await repository.recent_history(), [
+                TopicHistoryItem("Любимые блюда", "Приготовление еды")
+            ])
 
     def test_worker_passes_stable_idempotency_key(self) -> None:
         topic = self._topic()
         repository = SimpleNamespace(
-            recent_titles=AsyncMock(return_value=["Путешествия"]),
+            recent_history=AsyncMock(return_value=[
+                TopicHistoryItem("Путешествия", "Транспорт")
+            ]),
             mark_scheduled=AsyncMock(),
             mark_failed=AsyncMock(),
         )
@@ -166,7 +232,6 @@ class DailyTopicPreparationTests(unittest.TestCase):
             repository,
             service,
             creator_id=100,
-            target_keys=("chat",),
         )
         job = DailyTopicJob(
             id=8,
@@ -179,11 +244,115 @@ class DailyTopicPreparationTests(unittest.TestCase):
 
         call = service.generate_and_schedule.await_args.kwargs
         self.assertEqual(call["idempotency_key"], "daily-topic-job:8")
-        self.assertEqual(call["recent_titles"], ["Путешествия"])
+        self.assertEqual(call["history"], [
+            TopicHistoryItem("Путешествия", "Транспорт")
+        ])
         repository.mark_scheduled.assert_awaited_once_with(
             8, 17, topic.as_json_value()
         )
         repository.mark_failed.assert_not_awaited()
+
+    def test_deepseek_prompt_contains_previous_vocabulary_themes(self) -> None:
+        provider = DeepSeekTopicProvider(
+            "secret",
+            question_count=5,
+            vocabulary_count=10,
+            grammar_count=3,
+        )
+        payload = provider._payload(
+            (
+                TopicHistoryItem("Путешествия", "Транспорт и билеты"),
+                TopicHistoryItem("Ресторан", "Заказ еды"),
+            ),
+            TopicGenerationOptions("N4", "Короткие разговорные фразы"),
+        )
+
+        prompt = payload["messages"][1]["content"]
+        self.assertIn("Транспорт и билеты", prompt)
+        self.assertIn("Заказ еды", prompt)
+        self.assertIn("ровно 5 вопросов", prompt)
+        self.assertIn("ровно 10 слов", prompt)
+        system_prompt = payload["messages"][0]["content"]
+        self.assertIn("JLPT N4", system_prompt)
+        self.assertIn("Короткие разговорные фразы", system_prompt)
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+
+    def test_target_matches_only_configured_chat_and_topic(self) -> None:
+        target = Target(0, "ai", "AI chat", "-100123", 42)
+
+        self.assertTrue(target.matches(-100123, 42))
+        self.assertFalse(target.matches(-100123, 43))
+        self.assertFalse(target.matches(-100999, 42))
+
+    def test_deepseek_json_is_converted_to_validated_topic(self) -> None:
+        topic = self._topic()
+        response = {
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        topic.as_json_value(), ensure_ascii=False
+                    )
+                },
+            }]
+        }
+
+        parsed = DeepSeekTopicProvider._parse_completion(response)
+
+        self.assertEqual(parsed, topic)
+
+    def test_admin_level_and_comment_override_prompt_defaults(self) -> None:
+        provider = DeepSeekTopicProvider("secret")
+
+        payload = provider._payload(
+            (), TopicGenerationOptions("N2", "Тема о собеседовании на работу")
+        )
+
+        prompt = payload["messages"][0]["content"]
+        self.assertIn("JLPT N2", prompt)
+        self.assertIn("Тема о собеседовании на работу", prompt)
+        self.assertNotIn("JLPT N4", prompt)
+
+    def test_admin_preview_is_published_and_added_to_history(self) -> None:
+        topic = self._topic()
+        service = SimpleNamespace(
+            generate=AsyncMock(return_value=topic),
+            schedule=AsyncMock(return_value=25),
+            renderer=DailyTopicRenderer(),
+        )
+        repository = SimpleNamespace(
+            recent_history=AsyncMock(return_value=[]),
+            record_manual_publication=AsyncMock(return_value=7),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        context = SimpleNamespace(
+            state=RuntimeState(),
+            settings=SimpleNamespace(ai_topics=SimpleNamespace()),
+        )
+        handlers = AiTopicHandlers(context, access, service, repository)
+        status = SimpleNamespace(edit_text=AsyncMock())
+        message = SimpleNamespace(answer=AsyncMock(return_value=status), edit_text=AsyncMock())
+        callback = SimpleNamespace(
+            from_user=SimpleNamespace(id=100),
+            message=message,
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.generate(callback))
+
+        self.assertIn(100, context.state.ai_topic_previews)
+        service.generate.assert_awaited_once_with(
+            [], TopicGenerationOptions("N3", None)
+        )
+        status.edit_text.assert_awaited_once()
+
+        asyncio.run(handlers.publish(callback))
+
+        service.schedule.assert_awaited_once()
+        repository.record_manual_publication.assert_awaited_once_with(
+            25, topic.as_json_value()
+        )
+        self.assertNotIn(100, context.state.ai_topic_previews)
 
 
 if __name__ == "__main__":

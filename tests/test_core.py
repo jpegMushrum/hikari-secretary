@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from app.access import AdminAccess
 from app.bot import SecretaryBot
 from app.handlers.core import CoreHandlers
-from app.keyboards import admin_menu_keyboard
+from app.keyboards import admin_events_menu_keyboard, admin_menu_keyboard
 
 
 class CoreHandlersTests(unittest.TestCase):
@@ -50,11 +50,22 @@ class CoreHandlersTests(unittest.TestCase):
             for button in row
         }
         self.assertEqual(callbacks, {
+            "admin_events_menu",
+            "admin_ai_menu",
+            "show_user_interface",
+            "admin_help",
+        })
+
+        event_callbacks = {
+            button.callback_data
+            for row in admin_events_menu_keyboard().inline_keyboard
+            for button in row
+        }
+        self.assertEqual(event_callbacks, {
             "admin_new_post",
             "admin_queue",
             "admin_registrations",
-            "show_user_interface",
-            "admin_help",
+            "admin_home",
         })
 
     def test_user_cannot_open_admin_user_interface_button(self) -> None:
