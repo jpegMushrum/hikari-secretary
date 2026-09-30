@@ -82,6 +82,9 @@ class SecretaryBot:
                     topic_repository,
                     topic_service,
                     creator_id=min(settings.admin_ids),
+                    bot=bot,
+                    admin_ids=settings.admin_ids,
+                    timezone_value=settings.timezone,
                 ),
             ))
         self.workers = tuple(workers)

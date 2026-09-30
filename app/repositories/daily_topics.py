@@ -44,6 +44,16 @@ class DailyTopicRepository:
                    ) VALUES(?,'pending',?,?,?,?)""",
                 (scheduled, available, prompt_version, now, now),
             )
+            # A changed generation strategy may recover a failed job for this
+            # publication slot once, without creating a duplicate publication.
+            await connection.execute(
+                """UPDATE ai_topic_jobs
+                   SET status='pending',attempts=0,next_attempt_at=?,
+                       prompt_version=?,last_error=NULL,updated_at=?
+                   WHERE scheduled_for=? AND status='failed'
+                     AND prompt_version IS NOT ?""",
+                (available, prompt_version, now, scheduled, prompt_version),
+            )
             row = await (await connection.execute(
                 "SELECT id FROM ai_topic_jobs WHERE scheduled_for=?", (scheduled,)
             )).fetchone()

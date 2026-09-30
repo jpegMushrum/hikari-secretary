@@ -23,6 +23,8 @@ class DeepSeekError(RuntimeError):
 
 
 class DeepSeekTopicProvider:
+    MAX_OUTPUT_TOKENS = 4000
+
     def __init__(
         self,
         api_key: str,
@@ -67,16 +69,43 @@ class DeepSeekTopicProvider:
     ) -> DailyTopic:
         payload = self._payload(history, options)
         if self.session:
-            response = await self._request(self.session, payload)
+            topic = await self._generate_with_session(self.session, payload)
         else:
             timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                response = await self._request(session, payload)
-        topic = self._parse_completion(response)
+                topic = await self._generate_with_session(session, payload)
         requested_level = options.jlpt_level if options else "N3"
         self._validate_requested_level(topic, requested_level)
         self._validate_requested_size(topic)
         return topic
+
+    async def _generate_with_session(
+        self, session: aiohttp.ClientSession, payload: dict[str, Any]
+    ) -> DailyTopic:
+        for attempt in range(2):
+            if attempt:
+                payload["messages"][1]["content"] += (
+                    "\nПредыдущий JSON не поместился. Пересоздай весь ответ короче: "
+                    "сохрани число элементов и уровень JLPT, но убери вводные "
+                    "фразы и сократи каждый вопрос, перевод и объяснение до "
+                    "одной короткой фразы. Верни полный закрытый JSON."
+                )
+            response = await self._request(session, payload)
+            try:
+                return self._parse_completion(response)
+            except DeepSeekError:
+                choices = response.get("choices")
+                if (
+                    not isinstance(choices, list)
+                    or not choices
+                    or not isinstance(choices[0], dict)
+                    or choices[0].get("finish_reason") != "length"
+                ):
+                    raise
+        raise DeepSeekError(
+            "DeepSeek не завершил ответ даже после запроса более краткого текста "
+            "(finish_reason='length')"
+        )
 
     async def _request(
         self, session: aiohttp.ClientSession, payload: dict[str, Any]
@@ -124,6 +153,7 @@ class DeepSeekTopicProvider:
             "Не упрощай материал до более низкого уровня и не делай его сложнее. "
             "Тема может быть бытовой, но вопросы, лексика, примеры и грамматика "
             "должны реально тренировать целевой уровень. "
+            "Пиши компактно: без вступительных фраз, повторов и пояснений вне JSON. "
             f"Укажи {level} в поле jlpt_level."
         )
         level_guidance = {
@@ -160,7 +190,11 @@ class DeepSeekTopicProvider:
             '"translation": "перевод примера"}]\n'
             "}\n"
             f"Дай ровно {self.vocabulary_count} слов и ровно "
-            f"{self.grammar_count} грамматических конструкций."
+            f"{self.grammar_count} грамматических конструкций. "
+            "Название — до 40 символов, введение — до 100, каждый вопрос — до 80. "
+            "Для каждого слова укажи краткий перевод, для каждой конструкции — "
+            "одно короткое объяснение и один естественный пример с переводом. "
+            "Не добавляй альтернативные формулировки и текст вне JSON."
         )
         return {
             "model": self.model,
@@ -169,7 +203,7 @@ class DeepSeekTopicProvider:
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "max_tokens": 3000,
+            "max_tokens": self.MAX_OUTPUT_TOKENS,
             "stream": False,
         }
 

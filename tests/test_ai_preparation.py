@@ -320,6 +320,34 @@ class DailyTopicPreparationTests(unittest.TestCase):
         )
         repository.mark_failed.assert_not_awaited()
 
+    def test_exhausted_generation_notifies_admins(self) -> None:
+        repository = SimpleNamespace(
+            recent_history=AsyncMock(return_value=[]),
+            preferences=AsyncMock(return_value=TopicGenerationOptions("N3")),
+            mark_failed=AsyncMock(),
+        )
+        service = SimpleNamespace(
+            generate_and_schedule=AsyncMock(side_effect=DeepSeekError("finish_reason='length'"))
+        )
+        bot = SimpleNamespace(send_message=AsyncMock())
+        worker = DailyTopicWorker(
+            repository, service, creator_id=100, bot=bot,
+            admin_ids=frozenset({100, 200}), max_attempts=5,
+            timezone_value=ZoneInfo("Europe/Moscow"),
+        )
+        job = DailyTopicJob(
+            id=8, scheduled_for=datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc),
+            attempts=5, prompt_version="daily-v3",
+        )
+
+        asyncio.run(worker._process(job))
+
+        self.assertIsNone(repository.mark_failed.await_args.kwargs["retry_at"])
+        self.assertEqual(bot.send_message.await_count, 2)
+        for call in bot.send_message.await_args_list:
+            self.assertIn("12:00", call.args[1])
+            self.assertIn("finish_reason='length'", call.args[1])
+
     def test_deepseek_prompt_contains_previous_vocabulary_themes(self) -> None:
         provider = DeepSeekTopicProvider(
             "secret",
@@ -368,6 +396,32 @@ class DailyTopicPreparationTests(unittest.TestCase):
         parsed = DeepSeekTopicProvider._parse_completion(response)
 
         self.assertEqual(parsed, topic)
+
+    def test_deepseek_retries_truncated_json_with_shorter_prompt(self) -> None:
+        provider = DeepSeekTopicProvider(
+            "secret", session=SimpleNamespace(),
+            question_count=1, vocabulary_count=1, grammar_count=1,
+        )
+        requested_limits = []
+        prompts = []
+
+        async def respond(session, payload):
+            requested_limits.append(payload["max_tokens"])
+            prompts.append(payload["messages"][1]["content"])
+            if len(requested_limits) == 1:
+                return {"choices": [{"finish_reason": "length", "message": {"content": "{"}}]}
+            return {"choices": [{
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(self._topic().as_json_value())},
+            }]}
+
+        provider._request = respond
+        topic = asyncio.run(provider.generate([]))
+
+        self.assertEqual(topic, self._topic())
+        self.assertEqual(requested_limits, [4000, 4000])
+        self.assertIn("каждый вопрос — до 80", prompts[0])
+        self.assertIn("Предыдущий JSON не поместился", prompts[1])
 
     def test_admin_level_and_comment_override_prompt_defaults(self) -> None:
         provider = DeepSeekTopicProvider("secret")
@@ -457,7 +511,7 @@ class DailyTopicPreparationTests(unittest.TestCase):
         )
         self.assertEqual(repository.enqueue.await_count, 1)
 
-    def test_planner_skips_elapsed_time_and_plans_tomorrow(self) -> None:
+    def test_planner_recovers_today_and_plans_tomorrow_after_cutoff(self) -> None:
         repository = SimpleNamespace(enqueue=AsyncMock(return_value=13))
         planner = DailyTopicPlannerWorker(
             repository,
@@ -468,10 +522,33 @@ class DailyTopicPreparationTests(unittest.TestCase):
 
         asyncio.run(planner.plan(now))
 
-        self.assertEqual(
-            repository.enqueue.await_args.args[0],
-            datetime(2026, 9, 28, 7, 0, tzinfo=timezone.utc),
-        )
+        self.assertEqual(repository.enqueue.await_count, 2)
+        self.assertEqual(repository.enqueue.await_args_list[0].args[0],
+                         datetime(2026, 9, 27, 7, 0, tzinfo=timezone.utc))
+        self.assertEqual(repository.enqueue.await_args_list[1].args[0],
+                         datetime(2026, 9, 28, 7, 0, tzinfo=timezone.utc))
+
+    def test_new_prompt_version_retries_failed_job_once(self) -> None:
+        asyncio.run(self._new_prompt_version_retries_failed_job_once())
+
+    async def _new_prompt_version_retries_failed_job_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = await database_at(Path(directory) / "bot.sqlite3")
+            repository = DailyTopicRepository(database)
+            scheduled = datetime.now(timezone.utc) - timedelta(minutes=1)
+            job_id = await repository.enqueue(scheduled, "daily-v2")
+            claimed = await repository.claim_due()
+            await repository.mark_failed(job_id, "finish_reason='length'", retry_at=None)
+
+            self.assertEqual(await repository.enqueue(scheduled, "daily-v3"), job_id)
+            retried = await repository.claim_due()
+            self.assertIsNotNone(retried)
+            self.assertEqual(retried.id, job_id)
+            self.assertEqual(retried.attempts, 1)
+            await repository.mark_failed(job_id, "still failed", retry_at=None)
+
+            await repository.enqueue(scheduled, "daily-v3")
+            self.assertIsNone(await repository.claim_due())
 
 
 if __name__ == "__main__":

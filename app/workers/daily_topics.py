@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from aiogram import Bot
+
 from ..repositories.daily_topics import (
     DailyTopicJob,
     DailyTopicRepository,
@@ -27,12 +29,18 @@ class DailyTopicWorker:
         service: DailyTopicService,
         *,
         creator_id: int,
+        bot: Bot | None = None,
+        admin_ids: frozenset[int] = frozenset(),
+        timezone_value: ZoneInfo | timezone = timezone.utc,
         poll_interval_seconds: int = 30,
         max_attempts: int = 5,
     ):
         self.repository = repository
         self.service = service
         self.creator_id = creator_id
+        self.bot = bot
+        self.admin_ids = admin_ids
+        self.timezone = timezone_value
         self.poll_interval_seconds = max(1, poll_interval_seconds)
         self.max_attempts = max(1, max_attempts)
 
@@ -94,12 +102,30 @@ class DailyTopicWorker:
                 job.id,
                 job.attempts,
             )
+            if retry_at is None and self.bot:
+                for admin_id in self.admin_ids:
+                    try:
+                        await self.bot.send_message(
+                            admin_id,
+                            f"❌ Не удалось подготовить ИИ-публикацию "
+                            f"на {job.scheduled_for.astimezone(self.timezone):%d.%m.%Y %H:%M} "
+                            f"({self.timezone}) "
+                            f"после {job.attempts} попыток. "
+                            f"Публикация не поставлена в очередь.\n"
+                            f"Причина: {str(exc)[:500]}",
+                        )
+                    except Exception:
+                        log.exception(
+                            "Could not notify admin %s about failed AI job %s",
+                            admin_id, job.id,
+                        )
 
 
 class DailyTopicPlannerWorker:
     """Keeps the next automatic topic in the durable queue."""
 
     name = "daily_topic_planner"
+
     def __init__(
         self,
         repository: DailyTopicRepository,
@@ -128,14 +154,21 @@ class DailyTopicPlannerWorker:
         scheduled_local = datetime.combine(
             current.date(), self.publish_time, tzinfo=self.timezone
         )
-        if scheduled_local <= current:
-            scheduled_local += timedelta(days=1)
         scheduled_utc = scheduled_local.astimezone(timezone.utc)
         job_id = await self.repository.enqueue(
             scheduled_utc,
-            "daily-v2",
+            "daily-v3",
             available_at=current.astimezone(timezone.utc),
         )
+        if scheduled_local <= current:
+            tomorrow_utc = (scheduled_local + timedelta(days=1)).astimezone(
+                timezone.utc
+            )
+            await self.repository.enqueue(
+                tomorrow_utc,
+                "daily-v3",
+                available_at=current.astimezone(timezone.utc),
+            )
         log.debug(
             "Next daily topic job planned: job_id=%s scheduled_for=%s",
             job_id,
