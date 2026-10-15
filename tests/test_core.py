@@ -13,7 +13,8 @@ class CoreHandlersTests(unittest.TestCase):
     @staticmethod
     def _context(*admin_ids: int) -> SimpleNamespace:
         return SimpleNamespace(
-            settings=SimpleNamespace(admin_ids=frozenset(admin_ids))
+            settings=SimpleNamespace(admin_ids=frozenset(admin_ids)),
+            db=SimpleNamespace(pending_posts_limit_reached=AsyncMock(return_value=False)),
         )
 
     @staticmethod
@@ -80,6 +81,12 @@ class CoreHandlersTests(unittest.TestCase):
             "admin_registrations",
             "admin_home",
         })
+
+    def test_publication_limit_keeps_button_but_changes_its_label(self) -> None:
+        markup = admin_events_menu_keyboard(publication_limit_reached=True)
+        button = markup.inline_keyboard[0][0]
+        self.assertEqual(button.text, "Превышен лимит")
+        self.assertEqual(button.callback_data, "admin_new_post")
 
     def test_user_cannot_open_admin_user_interface_button(self) -> None:
         context = self._context(100)

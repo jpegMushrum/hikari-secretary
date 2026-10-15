@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 
 from app.handlers.registrations import RegistrationHandlers
 from app.keyboards import user_menu_keyboard
-from app.db import Page
 
 
 class UserEventMenuTests(unittest.TestCase):
@@ -40,13 +39,13 @@ class UserEventMenuTests(unittest.TestCase):
                 timezone_name="Europe/Moscow",
             ),
             db=SimpleNamespace(
-                available_events_page=AsyncMock(return_value=Page([{
+                available_events=AsyncMock(return_value=[{
                     "post_id": 7,
                     "title": "Японский разговорный клуб",
                     "text": "Японский разговорный клуб",
                     "starts_at": "2026-09-26T13:30:00+00:00",
                     "ends_at": "2026-09-26T15:30:00+00:00",
-                }], 0, 5, 1)),
+                }]),
             ),
         )
         handlers = RegistrationHandlers(context, None)
@@ -57,8 +56,16 @@ class UserEventMenuTests(unittest.TestCase):
         self.assertEqual(callback.message.answer.await_count, 1)
         event_call = callback.message.answer.await_args
         self.assertIn("Японский разговорный клуб", event_call.args[0])
+        self.assertNotIn("Страница", event_call.args[0])
         button = event_call.kwargs["reply_markup"].inline_keyboard[0][0]
         self.assertEqual(button.callback_data, "register_event:7")
+        callbacks = [
+            button.callback_data
+            for row in event_call.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        self.assertNotIn("noop", callbacks)
+        self.assertFalse(any(item.startswith("available_events_page:") for item in callbacks))
         callback.answer.assert_awaited_once()
 
     def test_registration_from_menu_uses_existing_flow(self):

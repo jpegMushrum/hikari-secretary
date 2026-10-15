@@ -10,6 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..access import AdminAccess
+from ..db import CapacityLimitReached
 from ..formatting import (
     entities_to_json,
     format_local,
@@ -146,9 +147,19 @@ class PublicationHandlers:
         if value <= setup.starts_at:
             await message.answer("Окончание должно быть позже начала мероприятия.")
             return
-        if await self.context.db.set_event(
-            setup.post_id, setup.title, setup.starts_at, value
-        ):
+        try:
+            event_added = await self.context.db.set_event(
+                setup.post_id, setup.title, setup.starts_at, value
+            )
+        except CapacityLimitReached:
+            self.context.state.awaiting_event.pop(message.from_user.id, None)
+            await message.answer(
+                "Превышен лимит: одновременно можно настроить не более пяти "
+                "активных мероприятий."
+            )
+            await self.show_draft(message.chat.id, setup.post_id)
+            return
+        if event_added:
             post_id = setup.post_id
             self.context.state.awaiting_event.pop(message.from_user.id, None)
             await message.answer("Регистрация добавлена к публикации.")
@@ -171,7 +182,15 @@ class PublicationHandlers:
             if when >= starts_at:
                 await message.answer("Публикация должна выйти раньше начала мероприятия.")
                 return
-        if await self.service.schedule(post_id, when):
+        try:
+            scheduled = await self.service.schedule(post_id, when)
+        except CapacityLimitReached:
+            await message.answer(
+                "Превышен лимит: в очереди уже пять публикаций. "
+                "Отмените или дождитесь отправки одной из них."
+            )
+            return
+        if scheduled:
             self.context.state.awaiting_schedule.pop(message.from_user.id, None)
             await message.answer(
                 f"Публикация #{post_id} запланирована на "
@@ -245,8 +264,15 @@ class PublicationHandlers:
                 f"Регистрация: {event_status}\n"
                 "Выберите цели публикации."
             )
+        event_limit_reached = (
+            not post["event"] and await self.context.db.active_events_limit_reached()
+        )
         markup = draft_keyboard(
-            post_id, selected, self.context.settings, bool(post["event"])
+            post_id,
+            selected,
+            self.context.settings,
+            bool(post["event"]),
+            event_limit_reached,
         )
         if edit:
             await edit.edit_text(body, reply_markup=markup)
@@ -285,6 +311,14 @@ class PublicationHandlers:
             await self.show_draft(callback.message.chat.id, post_id, callback.message)
             await callback.answer("Регистрация отключена")
             return
+        if await self.context.db.active_events_limit_reached():
+            await self.show_draft(callback.message.chat.id, post_id, callback.message)
+            await callback.answer(
+                "Превышен лимит: одновременно можно настроить не более пяти "
+                "активных мероприятий.",
+                show_alert=True,
+            )
+            return
         self.context.state.awaiting_schedule.pop(callback.from_user.id, None)
         self.context.state.awaiting_event[callback.from_user.id] = EventSetup(post_id)
         await callback.message.answer(
@@ -302,7 +336,15 @@ class PublicationHandlers:
             if starts_at <= datetime.now(timezone.utc):
                 await callback.answer("Мероприятие уже началось", show_alert=True)
                 return
-        if await self.service.schedule(post_id, datetime.now(timezone.utc)):
+        try:
+            scheduled = await self.service.schedule(post_id, datetime.now(timezone.utc))
+        except CapacityLimitReached:
+            await callback.answer(
+                "Превышен лимит: в очереди уже пять публикаций.",
+                show_alert=True,
+            )
+            return
+        if scheduled:
             self.context.state.awaiting_event.pop(callback.from_user.id, None)
             await callback.message.edit_text(f"Публикация #{post_id} поставлена в очередь.")
         else:
@@ -315,6 +357,12 @@ class PublicationHandlers:
         post = await self.context.db.post(post_id)
         if not post or not post["deliveries"]:
             await callback.answer("Выберите хотя бы одну цель", show_alert=True)
+            return
+        if await self.context.db.pending_posts_limit_reached():
+            await callback.answer(
+                "Превышен лимит: в очереди уже пять публикаций.",
+                show_alert=True,
+            )
             return
         self.context.state.awaiting_event.pop(callback.from_user.id, None)
         self.context.state.awaiting_schedule[callback.from_user.id] = post_id

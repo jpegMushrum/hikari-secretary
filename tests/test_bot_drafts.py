@@ -18,7 +18,10 @@ class DraftDisplayTests(unittest.TestCase):
         bot.attach_mock(AsyncMock(), "send_rich_message")
         bot.attach_mock(AsyncMock(), "send_message")
         context = SimpleNamespace(
-            db=SimpleNamespace(post=AsyncMock(return_value=post)),
+            db=SimpleNamespace(
+                post=AsyncMock(return_value=post),
+                active_events_limit_reached=AsyncMock(return_value=False),
+            ),
             settings=settings,
             bot=bot,
         )

@@ -9,6 +9,17 @@ from pathlib import Path
 import aiosqlite
 
 REQUIRED_SCHEMA_VERSION = 5
+MAX_PENDING_POSTS = 5
+MAX_ACTIVE_EVENTS = 5
+
+
+class CapacityLimitReached(RuntimeError):
+    """Raised when a bounded admin workflow has reached its maximum size."""
+
+    def __init__(self, limit: int, subject: str):
+        self.limit = limit
+        self.subject = subject
+        super().__init__(f"Превышен лимит: не более {limit} {subject}")
 
 
 def utc_now() -> datetime:
@@ -162,6 +173,11 @@ class Database:
                     if existing:
                         await db.commit()
                         return int(existing["id"])
+                scheduled_count = await (await db.execute(
+                    "SELECT COUNT(*) AS n FROM posts WHERE status='scheduled'"
+                )).fetchone()
+                if int(scheduled_count["n"]) >= MAX_PENDING_POSTS:
+                    raise CapacityLimitReached(MAX_PENDING_POSTS, "публикаций в очереди")
                 cursor = await db.execute(
                     """INSERT INTO posts(
                            creator_id,text,entities_json,rich_message_json,status,
@@ -238,28 +254,49 @@ class Database:
         if ends_at <= starts_at:
             return False
         async with self.connect() as db:
-            post = await (await db.execute(
-                "SELECT status FROM posts WHERE id=?", (post_id,)
-            )).fetchone()
-            if not post or post["status"] != "draft":
-                return False
-            await db.execute(
-                """INSERT INTO events(post_id,title,starts_at,ends_at,created_at)
-                   VALUES(?,?,?,?,?)
-                   ON CONFLICT(post_id) DO UPDATE SET
-                       title=excluded.title, starts_at=excluded.starts_at,
-                       ends_at=excluded.ends_at,
-                       status='active', cancelled_at=NULL""",
-                (
-                    post_id,
-                    title,
-                    starts_at.astimezone(timezone.utc).isoformat(),
-                    ends_at.astimezone(timezone.utc).isoformat(),
-                    utc_now().isoformat(),
-                ),
-            )
-            await db.commit()
-            return True
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                post = await (await db.execute(
+                    "SELECT status FROM posts WHERE id=?", (post_id,)
+                )).fetchone()
+                if not post or post["status"] != "draft":
+                    await db.rollback()
+                    return False
+                existing = await (await db.execute(
+                    "SELECT 1 FROM events WHERE post_id=?", (post_id,)
+                )).fetchone()
+                if not existing:
+                    count = await (await db.execute(
+                        """SELECT COUNT(*) AS n
+                           FROM events e JOIN posts p ON p.id=e.post_id
+                           WHERE e.status='active' AND e.ends_at>?
+                             AND p.status IN ('draft','scheduled','sent')""",
+                        (utc_now().isoformat(),),
+                    )).fetchone()
+                    if int(count["n"]) >= MAX_ACTIVE_EVENTS:
+                        raise CapacityLimitReached(
+                            MAX_ACTIVE_EVENTS, "активных мероприятий"
+                        )
+                await db.execute(
+                    """INSERT INTO events(post_id,title,starts_at,ends_at,created_at)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(post_id) DO UPDATE SET
+                           title=excluded.title, starts_at=excluded.starts_at,
+                           ends_at=excluded.ends_at,
+                           status='active', cancelled_at=NULL""",
+                    (
+                        post_id,
+                        title,
+                        starts_at.astimezone(timezone.utc).isoformat(),
+                        ends_at.astimezone(timezone.utc).isoformat(),
+                        utc_now().isoformat(),
+                    ),
+                )
+                await db.commit()
+                return True
+            except Exception:
+                await db.rollback()
+                raise
 
     async def remove_event(self, post_id: int) -> bool:
         async with self.connect() as db:
@@ -296,22 +333,52 @@ class Database:
 
     async def schedule(self, post_id: int, when: datetime) -> bool:
         async with self.connect() as db:
-            count = await (await db.execute(
-                "SELECT COUNT(*) AS n FROM deliveries WHERE post_id=? AND platform='telegram'",
-                (post_id,),
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                count = await (await db.execute(
+                    "SELECT COUNT(*) AS n FROM deliveries WHERE post_id=? AND platform='telegram'",
+                    (post_id,),
+                )).fetchone()
+                if not count or count["n"] == 0:
+                    await db.rollback()
+                    return False
+                scheduled_count = await (await db.execute(
+                    "SELECT COUNT(*) AS n FROM posts WHERE status='scheduled'"
+                )).fetchone()
+                if int(scheduled_count["n"]) >= MAX_PENDING_POSTS:
+                    raise CapacityLimitReached(MAX_PENDING_POSTS, "публикаций в очереди")
+                scheduled_at = when.astimezone(timezone.utc).isoformat()
+                cursor = await db.execute(
+                    "UPDATE posts SET status='scheduled', scheduled_at=? WHERE id=? AND status='draft'",
+                    (scheduled_at, post_id),
+                )
+                await db.execute(
+                    "UPDATE deliveries SET next_attempt_at=? WHERE post_id=? AND platform='telegram'",
+                    (scheduled_at, post_id),
+                )
+                await db.commit()
+                return cursor.rowcount == 1
+            except Exception:
+                await db.rollback()
+                raise
+
+    async def pending_posts_limit_reached(self) -> bool:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT COUNT(*) AS n FROM posts WHERE status='scheduled'"
             )).fetchone()
-            if not count or count["n"] == 0:
-                return False
-            cursor = await db.execute(
-                "UPDATE posts SET status='scheduled', scheduled_at=? WHERE id=? AND status='draft'",
-                (when.astimezone(timezone.utc).isoformat(), post_id),
-            )
-            await db.execute(
-                "UPDATE deliveries SET next_attempt_at=? WHERE post_id=? AND platform='telegram'",
-                (when.astimezone(timezone.utc).isoformat(), post_id),
-            )
-            await db.commit()
-            return cursor.rowcount == 1
+            return int(row["n"]) >= MAX_PENDING_POSTS
+
+    async def active_events_limit_reached(self) -> bool:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                """SELECT COUNT(*) AS n
+                   FROM events e JOIN posts p ON p.id=e.post_id
+                   WHERE e.status='active' AND e.ends_at>?
+                     AND p.status IN ('draft','scheduled','sent')""",
+                (utc_now().isoformat(),),
+            )).fetchone()
+            return int(row["n"]) >= MAX_ACTIVE_EVENTS
 
     async def cancel(self, post_id: int) -> bool:
         async with self.connect() as db:
@@ -722,6 +789,7 @@ class Database:
 
     async def admin_events(self, past: bool = False) -> list[dict]:
         time_condition = "e.ends_at<=?" if past else "e.ends_at>?"
+        order = "DESC" if past else "ASC"
         async with self.connect() as db:
             rows = await (await db.execute(
                 f"""SELECT e.post_id,e.title,e.starts_at,e.ends_at,e.status,p.text,
@@ -733,7 +801,8 @@ class Database:
                        SELECT 1 FROM deliveries d
                        WHERE d.post_id=e.post_id AND d.status='sent'
                    )
-                   GROUP BY e.post_id ORDER BY e.starts_at DESC""",
+                   GROUP BY e.post_id
+                   ORDER BY e.starts_at {order},e.post_id {order}""",
                 (utc_now().isoformat(),),
             )).fetchall()
             return [dict(row) for row in rows]

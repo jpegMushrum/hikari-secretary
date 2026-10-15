@@ -7,7 +7,11 @@ from .presentation import event_title, reminder_offset_label
 
 
 def draft_keyboard(
-    post_id: int, selected: set[str], settings: Settings, event_enabled: bool = False
+    post_id: int,
+    selected: set[str],
+    settings: Settings,
+    event_enabled: bool = False,
+    event_limit_reached: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for target in settings.targets:
@@ -16,9 +20,14 @@ def draft_keyboard(
             text=f"{mark} {target.name}", callback_data=f"target:{post_id}:{target.index}"
         )])
     event_mark = "✅" if event_enabled else "⬜"
+    event_text = (
+        "Превышен лимит"
+        if event_limit_reached and not event_enabled
+        else f"{event_mark} Регистрация на мероприятие"
+    )
     rows.extend([
         [InlineKeyboardButton(
-            text=f"{event_mark} Регистрация на мероприятие",
+            text=event_text,
             callback_data=f"event:{post_id}",
         )],
         [InlineKeyboardButton(text="🚀 Опубликовать сейчас", callback_data=f"now:{post_id}")],
@@ -103,10 +112,17 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def admin_events_menu_keyboard() -> InlineKeyboardMarkup:
+def admin_events_menu_keyboard(
+    publication_limit_reached: bool = False,
+) -> InlineKeyboardMarkup:
+    publication_text = (
+        "Превышен лимит"
+        if publication_limit_reached
+        else "✍️ Создать публикацию"
+    )
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="✍️ Создать публикацию", callback_data="admin_new_post"
+            text=publication_text, callback_data="admin_new_post"
         )],
         [
             InlineKeyboardButton(text="🕒 Очередь", callback_data="admin_queue"),
@@ -193,13 +209,12 @@ def _navigation_row(prefix: str, page: int, pages: int) -> list[InlineKeyboardBu
 
 
 def available_events_keyboard(
-    events: list[dict], page: int, pages: int, show_admin_return: bool = False
+    events: list[dict], show_admin_return: bool = False
 ) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(
         text=f"🎟 {event_title(event)[:48]}",
         callback_data=f"register_event:{event['post_id']}",
     )] for event in events]
-    rows.append(_navigation_row("available_events_page", page, pages))
     rows.append([InlineKeyboardButton(text="⌂ Главное меню", callback_data="user_home")])
     if show_admin_return:
         rows.append([InlineKeyboardButton(
@@ -209,13 +224,12 @@ def available_events_keyboard(
 
 
 def user_events_keyboard(
-    events: list[dict], page: int, pages: int, show_admin_return: bool = False
+    events: list[dict], show_admin_return: bool = False
 ) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(
         text=f"✖ Отменить · {event_title(event)[:38]}",
-        callback_data=f"unregister:{event['post_id']}:{page}",
+        callback_data=f"unregister:{event['post_id']}",
     )] for event in events]
-    rows.append(_navigation_row("my_events_page", page, pages))
     rows.append([InlineKeyboardButton(text="⌂ Главное меню", callback_data="user_home")])
     if show_admin_return:
         rows.append([InlineKeyboardButton(
@@ -238,8 +252,8 @@ def admin_events_page_keyboard(
                 text="Отменить", callback_data=f"cancel_event:{event['post_id']}"
             ))
         rows.append(row)
-    kind = "past" if past else "active"
-    rows.append(_navigation_row(f"admin_events_page:{kind}", page, pages))
+    if past:
+        rows.append(_navigation_row("admin_events_page:past", page, pages))
     rows.append([InlineKeyboardButton(
         text="Активные мероприятия" if past else "Прошедшие мероприятия",
         callback_data="admin_events_page:active:0" if past else "admin_events_page:past:0",

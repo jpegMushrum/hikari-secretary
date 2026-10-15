@@ -5,7 +5,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.db import Database
+from app.db import (
+    MAX_ACTIVE_EVENTS,
+    MAX_PENDING_POSTS,
+    CapacityLimitReached,
+    Database,
+    DeliveryTarget,
+)
 from migrations.runner import (
     migration_001_baseline,
     migration_002_profile_v2,
@@ -205,15 +211,15 @@ class DatabaseTests(unittest.TestCase):
             await db.mark_notified(post_id)
             self.assertEqual(await db.terminal_notifications(), [])
 
-    def test_event_pages_are_bounded_and_stably_ordered(self):
-        asyncio.run(self._event_pages_are_bounded_and_stably_ordered())
+    def test_available_events_are_bounded_by_active_event_limit_and_ordered(self):
+        asyncio.run(self._available_events_are_bounded_by_active_event_limit_and_ordered())
 
-    async def _event_pages_are_bounded_and_stably_ordered(self):
+    async def _available_events_are_bounded_by_active_event_limit_and_ordered(self):
         with tempfile.TemporaryDirectory() as directory:
             db = await migrated_database(Path(directory) / "test.sqlite3")
             now = datetime.now(timezone.utc)
             created: list[int] = []
-            for index in range(7):
+            for index in range(MAX_ACTIVE_EVENTS):
                 post_id = await db.create_post(1, f"Пост {index}", [], [])
                 created.append(post_id)
                 await db.toggle_delivery(post_id, "channel", "Канал", "-100")
@@ -225,15 +231,95 @@ class DatabaseTests(unittest.TestCase):
                 delivery = await db.claim_due()
                 await db.delivery_succeeded(delivery.id, str(index))
 
-            first = await db.available_events_page(99, 0, page_size=5)
-            second = await db.available_events_page(99, 1, page_size=5)
-            self.assertEqual(first.total, 7)
-            self.assertEqual(first.pages, 2)
-            self.assertEqual(len(first.items), 5)
-            self.assertEqual(len(second.items), 2)
-            self.assertEqual(
-                [row["post_id"] for row in first.items + second.items], created
-            )
+            available = await db.available_events(99)
+            self.assertEqual(len(available), MAX_ACTIVE_EVENTS)
+            self.assertEqual([row["post_id"] for row in available], created)
+
+    def test_sixth_pending_publication_is_rejected_atomically(self):
+        asyncio.run(self._sixth_pending_publication_is_rejected_atomically())
+
+    async def _sixth_pending_publication_is_rejected_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            for index in range(MAX_PENDING_POSTS):
+                post_id = await db.create_post(1, f"Пост {index}", [], [])
+                await db.toggle_delivery(post_id, "channel", "Канал", "-100")
+                self.assertTrue(await db.schedule(post_id, datetime.now(timezone.utc)))
+
+            self.assertTrue(await db.pending_posts_limit_reached())
+            sixth_post = await db.create_post(1, "Шестой пост", [], [])
+            await db.toggle_delivery(sixth_post, "channel", "Канал", "-100")
+            with self.assertRaises(CapacityLimitReached) as error:
+                await db.schedule(sixth_post, datetime.now(timezone.utc))
+            self.assertEqual(error.exception.limit, MAX_PENDING_POSTS)
+            self.assertEqual((await db.post(sixth_post))["status"], "draft")
+
+    def test_direct_scheduled_publication_creation_obeys_queue_limit(self):
+        asyncio.run(self._direct_scheduled_publication_creation_obeys_queue_limit())
+
+    async def _direct_scheduled_publication_creation_obeys_queue_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            target = DeliveryTarget("channel", "Канал", "-100")
+            for index in range(MAX_PENDING_POSTS):
+                await db.create_scheduled_post(
+                    1,
+                    f"Пост {index}",
+                    [],
+                    [],
+                    (target,),
+                    datetime.now(timezone.utc) + timedelta(days=1),
+                    source="test",
+                )
+
+            with self.assertRaises(CapacityLimitReached):
+                await db.create_scheduled_post(
+                    1,
+                    "Шестой пост",
+                    [],
+                    [],
+                    (target,),
+                    datetime.now(timezone.utc) + timedelta(days=1),
+                    source="test",
+                )
+
+    def test_sixth_active_event_is_rejected_and_cancelled_draft_frees_slot(self):
+        asyncio.run(self._sixth_active_event_is_rejected_and_cancelled_draft_frees_slot())
+
+    async def _sixth_active_event_is_rejected_and_cancelled_draft_frees_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            now = datetime.now(timezone.utc)
+            event_posts: list[int] = []
+            for index in range(MAX_ACTIVE_EVENTS):
+                post_id = await db.create_post(1, f"Пост {index}", [], [])
+                event_posts.append(post_id)
+                self.assertTrue(await db.set_event(
+                    post_id,
+                    f"Мероприятие {index}",
+                    now + timedelta(days=index + 1),
+                    now + timedelta(days=index + 1, hours=1),
+                ))
+
+            self.assertTrue(await db.active_events_limit_reached())
+            sixth_post = await db.create_post(1, "Шестое мероприятие", [], [])
+            with self.assertRaises(CapacityLimitReached) as error:
+                await db.set_event(
+                    sixth_post,
+                    "Шестое мероприятие",
+                    now + timedelta(days=10),
+                    now + timedelta(days=10, hours=1),
+                )
+            self.assertEqual(error.exception.limit, MAX_ACTIVE_EVENTS)
+
+            self.assertTrue(await db.cancel(event_posts[0]))
+            self.assertFalse(await db.active_events_limit_reached())
+            self.assertTrue(await db.set_event(
+                sixth_post,
+                "Шестое мероприятие",
+                now + timedelta(days=10),
+                now + timedelta(days=10, hours=1),
+            ))
 
     def test_event_registration_lifecycle(self):
         asyncio.run(self._event_registration_lifecycle())

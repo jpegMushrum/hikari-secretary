@@ -64,11 +64,12 @@ class CoreHandlers:
         )
 
     async def _send_admin_events_menu(self, send) -> None:
+        publication_limit_reached = await self.context.db.pending_posts_limit_reached()
         await send(
             "📅 Мероприятия и публикации\n\n"
             "Здесь можно создать публикацию, посмотреть очередь и управлять "
             "мероприятиями и участниками.",
-            reply_markup=admin_events_menu_keyboard(),
+            reply_markup=admin_events_menu_keyboard(publication_limit_reached),
         )
 
     async def _send_user_home(self, send, is_admin: bool) -> None:
@@ -108,6 +109,12 @@ class CoreHandlers:
 
     async def new_post(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
+            return
+        if await self.context.db.pending_posts_limit_reached():
+            await callback.answer(
+                "Превышен лимит: в очереди уже пять публикаций.",
+                show_alert=True,
+            )
             return
         await callback.message.answer(
             "Отправьте текст, фотографию с подписью, альбом или Rich Message. "

@@ -80,24 +80,21 @@ class RegistrationHandlers:
     async def my_events(self, message: Message) -> None:
         if not message.from_user or message.chat.type != "private":
             return
-        await self._send_user_events_page(message.from_user.id, 0, message.answer)
+        await self._send_user_events(message.from_user.id, message.answer)
 
     async def show_my_events(self, callback: CallbackQuery) -> None:
         if not callback.message or callback.message.chat.type != "private":
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
-        await self._send_user_events_page(
-            callback.from_user.id, 0, callback.message.answer
-        )
+        await self._send_user_events(callback.from_user.id, callback.message.answer)
         await callback.answer()
 
     async def paginate_my_events(self, callback: CallbackQuery) -> None:
         if not callback.message or callback.message.chat.type != "private":
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
-        page = int(callback.data.rsplit(":", 1)[1])
-        await self._send_user_events_page(
-            callback.from_user.id, page, callback.message.edit_text
+        await self._send_user_events(
+            callback.from_user.id, callback.message.edit_text
         )
         await callback.answer()
 
@@ -105,24 +102,21 @@ class RegistrationHandlers:
         if not callback.message or callback.message.chat.type != "private":
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
-        await self._send_available_events_page(
-            callback.from_user.id, 0, callback.message.answer
-        )
+        await self._send_available_events(callback.from_user.id, callback.message.answer)
         await callback.answer()
 
     async def paginate_available_events(self, callback: CallbackQuery) -> None:
         if not callback.message or callback.message.chat.type != "private":
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
-        page = int(callback.data.rsplit(":", 1)[1])
-        await self._send_available_events_page(
-            callback.from_user.id, page, callback.message.edit_text
+        await self._send_available_events(
+            callback.from_user.id, callback.message.edit_text
         )
         await callback.answer()
 
-    async def _send_available_events_page(self, user_id: int, page: int, send) -> None:
-        result = await self.context.db.available_events_page(user_id, page)
-        if not result.items:
+    async def _send_available_events(self, user_id: int, send) -> None:
+        events = await self.context.db.available_events(user_id)
+        if not events:
             await send(
                 "Сейчас нет доступных мероприятий, на которые вы ещё не зарегистрированы.",
                 reply_markup=user_menu_keyboard(
@@ -130,11 +124,8 @@ class RegistrationHandlers:
                 ),
             )
             return
-        lines = [
-            "🎟 Доступные мероприятия",
-            f"Страница {result.page + 1}/{result.pages}",
-        ]
-        for index, row in enumerate(result.items, 1):
+        lines = ["🎟 Доступные мероприятия"]
+        for index, row in enumerate(events, 1):
             starts = format_local(row["starts_at"], self.context.settings.timezone)
             lines.append(
                 f"\n{index}. {event_title(row)}\n"
@@ -143,10 +134,7 @@ class RegistrationHandlers:
         await send(
             "\n".join(lines),
             reply_markup=available_events_keyboard(
-                result.items,
-                result.page,
-                result.pages,
-                self._is_admin(user_id),
+                events, self._is_admin(user_id)
             ),
         )
 
@@ -218,9 +206,9 @@ class RegistrationHandlers:
         )
         await callback.answer()
 
-    async def _send_user_events_page(self, user_id: int, page: int, send) -> None:
-        result = await self.context.db.user_registrations_page(user_id, page)
-        if not result.items:
+    async def _send_user_events(self, user_id: int, send) -> None:
+        events = await self.context.db.user_registrations(user_id)
+        if not events:
             await send(
                 "У вас пока нет активных регистраций.",
                 reply_markup=user_menu_keyboard(
@@ -228,11 +216,8 @@ class RegistrationHandlers:
                 ),
             )
             return
-        lines = [
-            "📅 Мои мероприятия",
-            f"Страница {result.page + 1}/{result.pages}",
-        ]
-        for index, row in enumerate(result.items, 1):
+        lines = ["📅 Мои мероприятия"]
+        for index, row in enumerate(events, 1):
             starts = format_local(row["starts_at"], self.context.settings.timezone)
             if row["reminders_enabled"]:
                 reminder = reminder_offset_label(row["reminder_offset_minutes"])
@@ -246,31 +231,31 @@ class RegistrationHandlers:
         await send(
             "\n".join(lines),
             reply_markup=user_events_keyboard(
-                result.items,
-                result.page,
-                result.pages,
-                self._is_admin(user_id),
+                events, self._is_admin(user_id)
             ),
         )
 
     async def admin_registrations(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
-        await self._send_admin_events_page(False, 0, message.answer)
+        await self._send_admin_events(message.answer)
 
     async def admin_registrations_button(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        await self._send_admin_events_page(False, 0, callback.message.answer)
+        await self._send_admin_events(callback.message.answer)
         await callback.answer()
 
     async def paginate_admin_events(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
         _, kind, page_raw = callback.data.split(":")
-        await self._send_admin_events_page(
-            kind == "past", int(page_raw), callback.message.edit_text
-        )
+        if kind == "past":
+            await self._send_admin_events_page(
+                True, int(page_raw), callback.message.edit_text
+            )
+        else:
+            await self._send_admin_events(callback.message.edit_text)
         await callback.answer()
 
     async def show_past_events(self, callback: CallbackQuery) -> None:
@@ -298,6 +283,23 @@ class RegistrationHandlers:
             reply_markup=admin_events_page_keyboard(
                 result.items, result.page, result.pages, past
             ),
+        )
+
+    async def _send_admin_events(self, send) -> None:
+        events = await self.context.db.admin_events()
+        lines = ["Активные мероприятия"]
+        if not events:
+            lines.append("\nСписок пуст.")
+        for index, row in enumerate(events, 1):
+            starts = format_local(row["starts_at"], self.context.settings.timezone)
+            lines.append(
+                f"\n{index}. {event_title(row)}\n"
+                f"   {starts}\n"
+                f"   Зарегистрировано: {row['registrations']}"
+            )
+        await send(
+            "\n".join(lines),
+            reply_markup=admin_events_page_keyboard(events, 0, 1, False),
         )
 
     async def show_participants(self, callback: CallbackQuery) -> None:
@@ -633,14 +635,13 @@ class RegistrationHandlers:
             return
         parts = callback.data.split(":")
         post_id = int(parts[1])
-        page = int(parts[2]) if len(parts) > 2 else None
         if await self.context.db.cancel_registration(callback.from_user.id, post_id):
-            if page is None:
-                await callback.message.edit_text("Регистрация отменена.")
-            else:
-                await self._send_user_events_page(
-                    callback.from_user.id, page, callback.message.edit_text
+            if len(parts) > 2:
+                await self._send_user_events(
+                    callback.from_user.id, callback.message.edit_text
                 )
+            else:
+                await callback.message.edit_text("Регистрация отменена.")
             await callback.answer()
         else:
             await callback.answer(
