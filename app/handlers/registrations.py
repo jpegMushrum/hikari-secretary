@@ -10,10 +10,14 @@ from aiogram.types import CallbackQuery, Message, User
 from ..access import AdminAccess
 from ..formatting import format_local
 from ..keyboards import (
+    admin_feedback_detail_keyboard,
+    admin_feedbacks_keyboard,
     admin_events_page_keyboard,
     available_events_keyboard,
     binary_registration_keyboard,
     confirm_event_cancellation_keyboard,
+    feedback_offer_keyboard,
+    feedback_skip_keyboard,
     participants_keyboard,
     profile_answer_keyboard,
     profile_keyboard,
@@ -24,6 +28,8 @@ from ..keyboards import (
 )
 from ..presentation import (
     event_title,
+    feedback_detail_text,
+    feedbacks_list_text,
     participants_rich_message,
     reminder_offset_label,
     telegram_identity_values,
@@ -42,6 +48,7 @@ class RegistrationHandlers:
         router.message.register(self.my_events, Command("events"))
         router.message.register(self.profile, Command("profile"))
         router.message.register(self.admin_registrations, Command("registrations"))
+        router.message.register(self.admin_feedback, Command("feedback"))
         router.callback_query.register(
             self.admin_registrations_button, F.data == "admin_registrations"
         )
@@ -64,6 +71,10 @@ class RegistrationHandlers:
         router.callback_query.register(
             self.answer_profile_question, F.data.startswith("profile_answer:")
         )
+        router.callback_query.register(self.manual_feedback, F.data == "feedback_manual")
+        router.callback_query.register(self.toggle_feedback, F.data == "feedback_toggle")
+        router.callback_query.register(self.answer_feedback_offer, F.data.startswith("feedback_offer:"))
+        router.callback_query.register(self.skip_feedback, F.data == "feedback_skip")
         router.callback_query.register(self.unregister, F.data.startswith("unregister:"))
         router.callback_query.register(self.record_attendance, F.data.startswith("attendance:"))
         router.callback_query.register(self.show_participants, F.data.startswith("participants:"))
@@ -74,6 +85,15 @@ class RegistrationHandlers:
         router.callback_query.register(self.ask_cancel_event, F.data.startswith("cancel_event:"))
         router.callback_query.register(
             self.confirm_cancel_event, F.data.startswith("confirm_cancel_event:")
+        )
+        router.callback_query.register(
+            self.show_admin_feedback, F.data == "admin_feedback"
+        )
+        router.callback_query.register(
+            self.paginate_admin_feedback, F.data.startswith("admin_feedback_page:")
+        )
+        router.callback_query.register(
+            self.show_feedback_detail, F.data.startswith("admin_feedback_item:")
         )
         router.callback_query.register(self.dismiss_cancel_event, F.data == "dismiss_cancel_event")
         router.callback_query.register(self.noop, F.data == "noop")
@@ -169,18 +189,23 @@ class RegistrationHandlers:
         profile = await self.context.db.profile(user_id)
         if not profile:
             text = "👤 Профиль пока не настроен."
+            feedback_enabled = True
         else:
             citizen = self._yes_no(profile["is_russian_citizen"])
             student = self._yes_no(profile["is_itmo_student"])
+            feedback_enabled = bool(profile["feedback_enabled"])
             text = (
                 f"👤 Ваш профиль\n\n"
                 f"Имя и фамилия: {profile['full_name']}\n"
                 f"Гражданин РФ: {citizen}\n"
-                f"Студент ИТМО: {student}"
+                f"Студент ИТМО: {student}\n"
+                f"Предлагать оставить обратную связь: {self._yes_no(feedback_enabled)}"
             )
         await send(
             text,
-            reply_markup=profile_keyboard(self._is_admin(user_id)),
+            reply_markup=profile_keyboard(
+                self._is_admin(user_id), feedback_enabled
+            ),
         )
 
     def _is_admin(self, user_id: int) -> bool:
@@ -198,6 +223,9 @@ class RegistrationHandlers:
             return
         if await self.context.db.registration_flow(callback.from_user.id):
             await callback.answer("Сначала завершите текущую регистрацию", show_alert=True)
+            return
+        if await self.context.db.feedback_flow(callback.from_user.id):
+            await callback.answer("Сначала завершите ввод отзыва", show_alert=True)
             return
         await self.context.db.begin_profile_edit(callback.from_user.id)
         profile = await self.context.db.profile(callback.from_user.id)
@@ -246,6 +274,52 @@ class RegistrationHandlers:
             return
         await self._send_admin_events(callback.message.answer)
         await callback.answer()
+
+    async def admin_feedback(self, message: Message) -> None:
+        if not await self.access.guard_message(message):
+            return
+        await self._send_admin_feedbacks(0, message.answer)
+
+    async def show_admin_feedback(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_admin_feedbacks(0, callback.message.answer)
+        await callback.answer()
+
+    async def paginate_admin_feedback(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        page = int(callback.data.split(":")[1])
+        await self._send_admin_feedbacks(page, callback.message.edit_text)
+        await callback.answer()
+
+    async def show_feedback_detail(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        _, feedback_raw, page_raw = callback.data.split(":")
+        feedback = await self.context.db.feedback_entry(int(feedback_raw))
+        if not feedback:
+            await callback.answer("Отзыв не найден", show_alert=True)
+            return
+        await callback.message.edit_text(
+            feedback_detail_text(feedback, self.context.settings.timezone),
+            reply_markup=admin_feedback_detail_keyboard(
+                int(feedback_raw), int(page_raw)
+            ),
+        )
+        await callback.answer()
+
+    async def _send_admin_feedbacks(self, page: int, send) -> None:
+        result = await self.context.db.feedback_entries_page(page)
+        await send(
+            feedbacks_list_text(
+                result.items, result.page, result.pages,
+                self.context.settings.timezone,
+            ),
+            reply_markup=admin_feedbacks_keyboard(
+                result.items, result.page, result.pages
+            ),
+        )
 
     async def paginate_admin_events(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
@@ -392,6 +466,10 @@ class RegistrationHandlers:
             )
             await self._continue_profile_edit(message, profile_flow)
             return True
+        feedback_flow = await self.context.db.feedback_flow(message.from_user.id)
+        if feedback_flow:
+            await self._continue_feedback(message, feedback_flow)
+            return True
         return False
 
     async def begin_registration(self, user: User, send, post_id: int) -> None:
@@ -399,6 +477,11 @@ class RegistrationHandlers:
         if await self.context.db.profile_edit_flow(user_id):
             await send(
                 "Сначала завершите настройку профиля, затем снова нажмите «Зарегистрироваться»."
+            )
+            return
+        if await self.context.db.feedback_flow(user_id):
+            await send(
+                "Сначала завершите ввод отзыва, затем снова нажмите «Зарегистрироваться»."
             )
             return
         event = await self.context.db.event_for_registration(post_id)
@@ -645,13 +728,114 @@ class RegistrationHandlers:
             await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
             return
         _, post_raw, attended_raw = callback.data.split(":")
+        post_id = int(post_raw)
+        attended = attended_raw == "1"
         if await self.context.db.record_attendance(
-            callback.from_user.id, int(post_raw), attended_raw == "1"
+            callback.from_user.id, post_id, attended
         ):
             await callback.message.edit_text("Спасибо! Посещение отмечено.")
+            if attended and await self.context.db.feedback_enabled(callback.from_user.id):
+                try:
+                    await callback.message.answer(
+                        "Хотите оставить обратную связь?",
+                        reply_markup=feedback_offer_keyboard(post_id),
+                    )
+                except Exception:
+                    log.exception(
+                        "Could not send feedback offer: user_id=%s post_id=%s",
+                        callback.from_user.id, post_id,
+                    )
             await callback.answer()
         else:
             await callback.answer("Ответ уже неактуален", show_alert=True)
+
+    async def manual_feedback(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        if await self.context.db.registration_flow(callback.from_user.id):
+            await callback.answer("Сначала завершите текущую регистрацию", show_alert=True)
+            return
+        if await self.context.db.profile_edit_flow(callback.from_user.id):
+            await callback.answer("Сначала завершите настройку профиля", show_alert=True)
+            return
+        await self.context.db.begin_feedback_flow(callback.from_user.id, None)
+        await callback.message.answer(
+            "Напишите отзыв одним сообщением.\n\n"
+            "Мы не знаем, к какому мероприятию относится этот отзыв, "
+            "поэтому назовите его в тексте, если это важно.",
+            reply_markup=feedback_skip_keyboard(),
+        )
+        await callback.answer()
+
+    async def toggle_feedback(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        enabled = await self.context.db.toggle_feedback_enabled(callback.from_user.id)
+        if enabled is None:
+            await callback.answer("Сначала настройте профиль", show_alert=True)
+            return
+        await self._send_profile(callback.from_user.id, callback.message.edit_text)
+        await callback.answer(
+            "Автоматические предложения включены"
+            if enabled else "Автоматические предложения отключены"
+        )
+
+    async def answer_feedback_offer(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        _, post_raw, answer = callback.data.split(":")
+        post_id = int(post_raw)
+        if answer == "yes":
+            if not await self.context.db.begin_feedback_flow(callback.from_user.id, post_id):
+                await callback.answer("Этот вопрос уже неактуален", show_alert=True)
+                return
+            await callback.message.edit_text(
+                "Напишите отзыв одним сообщением.",
+                reply_markup=feedback_skip_keyboard(),
+            )
+        elif answer == "no":
+            await callback.message.edit_text(
+                "Хорошо, спросим после следующего посещённого мероприятия."
+            )
+        elif answer == "never":
+            await self.context.db.set_feedback_enabled(callback.from_user.id, False)
+            await callback.message.edit_text(
+                "Автоматические предложения отключены. Их можно включить в настройках профиля."
+            )
+        else:
+            await callback.answer("Некорректный ответ", show_alert=True)
+            return
+        await callback.answer()
+
+    async def skip_feedback(self, callback: CallbackQuery) -> None:
+        if not callback.message or callback.message.chat.type != "private":
+            await callback.answer("Откройте личные сообщения с ботом", show_alert=True)
+            return
+        await self.context.db.delete_feedback_flow(callback.from_user.id)
+        await callback.message.edit_text("Отзыв не сохранён.")
+        await callback.answer()
+
+    async def _continue_feedback(self, message: Message, flow: dict) -> None:
+        text = (message.text or "").strip()
+        if not text or len(text) > 3000:
+            await message.answer(
+                "Отзыв должен содержать от 1 до 3000 символов. "
+                "Отправьте текст ещё раз или нажмите «Пропустить»."
+            )
+            return
+        saved = await self.context.db.save_feedback_from_flow(message.from_user.id, text)
+        if not saved:
+            await message.answer("Сценарий отзыва уже завершён. Откройте его снова в профиле.")
+            return
+        if saved["post_id"] is None:
+            await message.answer(
+                "Спасибо за отзыв! Он сохранён как общий, без привязки к мероприятию."
+            )
+        else:
+            await message.answer("Спасибо за отзыв!")
 
     async def noop(self, callback: CallbackQuery) -> None:
         await callback.answer()

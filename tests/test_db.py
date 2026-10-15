@@ -28,10 +28,10 @@ async def migrated_database(path: Path) -> Database:
 
 
 class DatabaseTests(unittest.TestCase):
-    def test_v4_adds_ai_infrastructure_to_v3_database(self):
-        asyncio.run(self._v4_adds_ai_infrastructure_to_v3_database())
+    def test_v6_adds_feedback_to_v3_database(self):
+        asyncio.run(self._v6_adds_feedback_to_v3_database())
 
-    async def _v4_adds_ai_infrastructure_to_v3_database(self):
+    async def _v6_adds_feedback_to_v3_database(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.sqlite3"
             connection = sqlite3.connect(path)
@@ -60,7 +60,7 @@ class DatabaseTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(migrate(path, create_backup=False), [4, 5])
+            self.assertEqual(migrate(path, create_backup=False), [4, 5, 6])
             db = Database(path)
             await db.initialize()
             post = await db.post(1)
@@ -72,7 +72,11 @@ class DatabaseTests(unittest.TestCase):
                 settings = await (await connection.execute(
                     "SELECT jlpt_level,admin_comment FROM ai_topic_settings WHERE id=1"
                 )).fetchone()
+                feedback_table = await (await connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='feedback_entries'"
+                )).fetchone()
             self.assertIsNotNone(table)
+            self.assertIsNotNone(feedback_table)
             self.assertEqual(settings["jlpt_level"], "N3")
             self.assertIsNone(settings["admin_comment"])
 
@@ -134,6 +138,7 @@ class DatabaseTests(unittest.TestCase):
             profile = await db.profile(5)
             self.assertIsNone(profile["is_russian_citizen"])
             self.assertIsNone(profile["is_itmo_student"])
+            self.assertEqual(profile["feedback_enabled"], 1)
 
     def test_existing_profiles_are_migrated_without_data_loss(self):
         asyncio.run(self._existing_profiles_are_migrated_without_data_loss())
@@ -458,6 +463,58 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertIsNotNone(cancelled["registered_at"])
             self.assertIsNotNone(cancelled["cancelled_at"])
+
+    def test_feedback_lifecycle_preserves_event_and_manual_reviews(self):
+        asyncio.run(self._feedback_lifecycle_preserves_event_and_manual_reviews())
+
+    async def _feedback_lifecycle_preserves_event_and_manual_reviews(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            post_id = await db.create_post(100, "Встреча", [], [])
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            starts_at = datetime.now(timezone.utc) + timedelta(hours=2)
+            await db.set_event(
+                post_id, "Встреча", starts_at, starts_at + timedelta(hours=1)
+            )
+            await db.schedule(post_id, datetime.now(timezone.utc))
+            delivery = await db.claim_due()
+            await db.delivery_succeeded(delivery.id, "event-message")
+            await db.save_profile(200, "Иван Иванов", "ivan", "Иван", "Иванов")
+            await db.update_profile_answers(
+                200, is_russian_citizen=True, is_itmo_student=False
+            )
+            self.assertTrue(await db.feedback_enabled(200))
+            self.assertTrue(await db.register(200, post_id, None))
+            async with db.connect() as connection:
+                await connection.execute(
+                    "UPDATE events SET starts_at=?,ends_at=? WHERE post_id=?",
+                    (
+                        (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+                        (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                        post_id,
+                    ),
+                )
+                await connection.commit()
+            self.assertTrue(await db.record_attendance(200, post_id, True))
+            self.assertTrue(await db.begin_feedback_flow(200, post_id))
+            event_feedback = await db.save_feedback_from_flow(200, "Было интересно!")
+            self.assertEqual(event_feedback["post_id"], post_id)
+
+            self.assertTrue(await db.begin_feedback_flow(200, None))
+            manual_feedback = await db.save_feedback_from_flow(200, "Общий отзыв")
+            self.assertIsNone(manual_feedback["post_id"])
+            self.assertIsNone(await db.feedback_flow(200))
+
+            feedbacks = await db.feedback_entries_page(0)
+            self.assertEqual(feedbacks.total, 2)
+            self.assertEqual(feedbacks.items[0]["full_name"], "Иван Иванов")
+            self.assertEqual(
+                {entry["post_id"] for entry in feedbacks.items}, {post_id, None}
+            )
+            self.assertFalse(await db.begin_feedback_flow(201, post_id))
+            self.assertTrue(await db.set_feedback_enabled(200, False))
+            self.assertFalse(await db.feedback_enabled(200))
+            self.assertTrue(await db.toggle_feedback_enabled(200))
 
     def test_attendance_is_requested_only_for_active_registration(self):
         asyncio.run(self._attendance_is_requested_only_for_active_registration())

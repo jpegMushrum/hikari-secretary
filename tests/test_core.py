@@ -66,6 +66,7 @@ class CoreHandlersTests(unittest.TestCase):
         self.assertEqual(callbacks, {
             "admin_events_menu",
             "admin_ai_menu",
+            "admin_feedback",
             "show_user_interface",
             "admin_help",
         })

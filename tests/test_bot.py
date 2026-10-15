@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo
 from app.access import AdminAccess
 from app.handlers.registrations import RegistrationHandlers
 from app.db import Page
+from app.keyboards import feedback_offer_keyboard, profile_keyboard
 from app.presentation import (
+    feedbacks_list_text,
     participant_status_label,
     participants_rich_message,
     reminder_offset_label,
@@ -135,6 +137,68 @@ class AccessAndPresentationTests(unittest.TestCase):
             "не был",
         )
 
+    def test_feedback_offer_and_profile_setting_are_visible(self) -> None:
+        offer_callbacks = {
+            button.callback_data
+            for row in feedback_offer_keyboard(7).inline_keyboard
+            for button in row
+        }
+        self.assertEqual(offer_callbacks, {
+            "feedback_offer:7:yes",
+            "feedback_offer:7:no",
+            "feedback_offer:7:never",
+        })
+        profile_buttons = {
+            button.text: button.callback_data
+            for row in profile_keyboard(feedback_enabled=False).inline_keyboard
+            for button in row
+        }
+        self.assertEqual(
+            profile_buttons["💬 Предлагать отзывы: ❌"], "feedback_toggle"
+        )
+        self.assertEqual(
+            profile_buttons["💬 Оставить обратную связь"], "feedback_manual"
+        )
+
+    def test_feedback_list_shows_author_event_and_manual_marker(self) -> None:
+        text = feedbacks_list_text(
+            [
+                {
+                    "id": 2,
+                    "user_id": 200,
+                    "post_id": 7,
+                    "title": "Осенний вечер",
+                    "post_text": "Описание",
+                    "full_name": "Анна Петрова",
+                    "telegram_username": "anna",
+                    "telegram_first_name": "Анна",
+                    "telegram_last_name": "Петрова",
+                    "created_at": "2026-10-15T14:00:00+00:00",
+                    "feedback_text": "Очень понравилось!",
+                },
+                {
+                    "id": 1,
+                    "user_id": 201,
+                    "post_id": None,
+                    "title": None,
+                    "post_text": None,
+                    "full_name": "Иван Иванов",
+                    "telegram_username": None,
+                    "telegram_first_name": "Иван",
+                    "telegram_last_name": "Иванов",
+                    "created_at": "2026-10-15T13:00:00+00:00",
+                    "feedback_text": "Общий отзыв",
+                },
+            ],
+            0,
+            1,
+            ZoneInfo("Europe/Moscow"),
+        )
+
+        self.assertIn("Анна Петрова (@anna)", text)
+        self.assertIn("Мероприятие #7: «Осенний вечер»", text)
+        self.assertIn("Общий отзыв (мероприятие не указано)", text)
+
     def test_participant_table_is_sent_only_after_admin_guard(self) -> None:
         context = SimpleNamespace(
             settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
@@ -171,3 +235,71 @@ class AccessAndPresentationTests(unittest.TestCase):
             "table",
         )
         callback.answer.assert_awaited_once()
+
+    def test_attendance_confirmation_offers_feedback_only_after_visit(self) -> None:
+        db = SimpleNamespace(
+            record_attendance=AsyncMock(return_value=True),
+            feedback_enabled=AsyncMock(return_value=True),
+        )
+        handlers = RegistrationHandlers(SimpleNamespace(db=db), None)
+        callback = SimpleNamespace(
+            data="attendance:7:1",
+            from_user=SimpleNamespace(id=200),
+            message=SimpleNamespace(
+                chat=SimpleNamespace(type="private"),
+                edit_text=AsyncMock(),
+                answer=AsyncMock(),
+            ),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.record_attendance(callback))
+
+        db.record_attendance.assert_awaited_once_with(200, 7, True)
+        db.feedback_enabled.assert_awaited_once_with(200)
+        self.assertEqual(
+            callback.message.answer.await_args.args[0],
+            "Хотите оставить обратную связь?",
+        )
+        callback.answer.assert_awaited_once()
+
+    def test_feedback_offer_starts_event_feedback_flow(self) -> None:
+        db = SimpleNamespace(begin_feedback_flow=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(SimpleNamespace(db=db), None)
+        callback = SimpleNamespace(
+            data="feedback_offer:7:yes",
+            from_user=SimpleNamespace(id=200),
+            message=SimpleNamespace(
+                chat=SimpleNamespace(type="private"), edit_text=AsyncMock()
+            ),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.answer_feedback_offer(callback))
+
+        db.begin_feedback_flow.assert_awaited_once_with(200, 7)
+        self.assertIn(
+            "Напишите отзыв", callback.message.edit_text.await_args.args[0]
+        )
+        callback.answer.assert_awaited_once()
+
+    def test_text_feedback_is_saved_from_active_flow(self) -> None:
+        db = SimpleNamespace(
+            registration_flow=AsyncMock(return_value=None),
+            profile_edit_flow=AsyncMock(return_value=None),
+            feedback_flow=AsyncMock(return_value={"post_id": None}),
+            save_feedback_from_flow=AsyncMock(return_value={"id": 1, "post_id": None}),
+        )
+        handlers = RegistrationHandlers(SimpleNamespace(db=db), None)
+        message = SimpleNamespace(
+            from_user=SimpleNamespace(id=200),
+            chat=SimpleNamespace(type="private"),
+            text="Общий отзыв",
+            answer=AsyncMock(),
+        )
+
+        handled = asyncio.run(handlers.handle_text_flow(message))
+
+        self.assertTrue(handled)
+        db.save_feedback_from_flow.assert_awaited_once_with(200, "Общий отзыв")
+        self.assertIn("без привязки", message.answer.await_args.args[0])

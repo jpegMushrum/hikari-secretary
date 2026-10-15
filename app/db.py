@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-REQUIRED_SCHEMA_VERSION = 5
+REQUIRED_SCHEMA_VERSION = 6
 MAX_PENDING_POSTS = 5
 MAX_ACTIVE_EVENTS = 5
 
@@ -468,6 +468,127 @@ class Database:
         async with self.connect() as db:
             row = await (await db.execute(
                 "SELECT * FROM user_profiles WHERE user_id=?", (user_id,)
+            )).fetchone()
+            return dict(row) if row else None
+
+    async def feedback_enabled(self, user_id: int) -> bool:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT feedback_enabled FROM user_profiles WHERE user_id=?", (user_id,)
+            )).fetchone()
+            return bool(row and row["feedback_enabled"])
+
+    async def toggle_feedback_enabled(self, user_id: int) -> bool | None:
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute(
+                "SELECT feedback_enabled FROM user_profiles WHERE user_id=?", (user_id,)
+            )).fetchone()
+            if not row:
+                await db.rollback()
+                return None
+            enabled = not bool(row["feedback_enabled"])
+            await db.execute(
+                "UPDATE user_profiles SET feedback_enabled=?,updated_at=? WHERE user_id=?",
+                (int(enabled), utc_now().isoformat(), user_id),
+            )
+            await db.commit()
+            return enabled
+
+    async def set_feedback_enabled(self, user_id: int, enabled: bool) -> bool:
+        async with self.connect() as db:
+            cursor = await db.execute(
+                "UPDATE user_profiles SET feedback_enabled=?,updated_at=? WHERE user_id=?",
+                (int(enabled), utc_now().isoformat(), user_id),
+            )
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def begin_feedback_flow(self, user_id: int, post_id: int | None) -> bool:
+        async with self.connect() as db:
+            if post_id is not None:
+                registration = await (await db.execute(
+                    """SELECT 1 FROM registrations
+                       WHERE user_id=? AND post_id=? AND status='registered' AND attended=1""",
+                    (user_id, post_id),
+                )).fetchone()
+                if not registration:
+                    return False
+            await db.execute(
+                """INSERT INTO feedback_flows(user_id,post_id,updated_at) VALUES(?,?,?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       post_id=excluded.post_id,updated_at=excluded.updated_at""",
+                (user_id, post_id, utc_now().isoformat()),
+            )
+            await db.commit()
+            return True
+
+    async def feedback_flow(self, user_id: int) -> dict | None:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT * FROM feedback_flows WHERE user_id=?", (user_id,)
+            )).fetchone()
+            return dict(row) if row else None
+
+    async def delete_feedback_flow(self, user_id: int) -> None:
+        async with self.connect() as db:
+            await db.execute("DELETE FROM feedback_flows WHERE user_id=?", (user_id,))
+            await db.commit()
+
+    async def save_feedback_from_flow(self, user_id: int, text: str) -> dict | None:
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            flow = await (await db.execute(
+                "SELECT post_id FROM feedback_flows WHERE user_id=?", (user_id,)
+            )).fetchone()
+            if not flow:
+                await db.rollback()
+                return None
+            cursor = await db.execute(
+                """INSERT INTO feedback_entries(user_id,post_id,text,created_at)
+                   VALUES(?,?,?,?)""",
+                (user_id, flow["post_id"], text, utc_now().isoformat()),
+            )
+            await db.execute("DELETE FROM feedback_flows WHERE user_id=?", (user_id,))
+            await db.commit()
+            return {"id": int(cursor.lastrowid), "post_id": flow["post_id"]}
+
+    async def feedback_entries_page(
+        self, page: int, page_size: int = 5
+    ) -> Page:
+        page = max(0, page)
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                "SELECT COUNT(*) AS n FROM feedback_entries"
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            rows = await (await db.execute(
+                """SELECT f.id,f.user_id,f.post_id,f.text AS feedback_text,f.created_at,
+                          u.full_name,u.telegram_username,u.telegram_first_name,
+                          u.telegram_last_name,e.title,p.text AS post_text
+                   FROM feedback_entries f
+                   LEFT JOIN user_profiles u ON u.user_id=f.user_id
+                   LEFT JOIN events e ON e.post_id=f.post_id
+                   LEFT JOIN posts p ON p.id=f.post_id
+                   ORDER BY f.created_at DESC,f.id DESC
+                   LIMIT ? OFFSET ?""",
+                (page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
+
+    async def feedback_entry(self, feedback_id: int) -> dict | None:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                """SELECT f.id,f.user_id,f.post_id,f.text AS feedback_text,f.created_at,
+                          u.full_name,u.telegram_username,u.telegram_first_name,
+                          u.telegram_last_name,e.title,p.text AS post_text
+                   FROM feedback_entries f
+                   LEFT JOIN user_profiles u ON u.user_id=f.user_id
+                   LEFT JOIN events e ON e.post_id=f.post_id
+                   LEFT JOIN posts p ON p.id=f.post_id
+                   WHERE f.id=?""",
+                (feedback_id,),
             )).fetchone()
             return dict(row) if row else None
 

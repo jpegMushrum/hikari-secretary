@@ -105,6 +105,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
             text="📅 Мероприятия и публикации", callback_data="admin_events_menu"
         )],
         [InlineKeyboardButton(text="🤖 ИИ", callback_data="admin_ai_menu")],
+        [InlineKeyboardButton(text="💬 Отзывы", callback_data="admin_feedback")],
         [InlineKeyboardButton(
             text="👤 Интерфейс пользователя", callback_data="show_user_interface"
         )],
@@ -274,9 +275,21 @@ def participants_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def profile_keyboard(show_admin_return: bool = False) -> InlineKeyboardMarkup:
+def profile_keyboard(
+    show_admin_return: bool = False, feedback_enabled: bool = True
+) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="✏️ Изменить профиль", callback_data="edit_profile")],
+        [InlineKeyboardButton(
+            text="💬 Оставить обратную связь", callback_data="feedback_manual"
+        )],
+        [InlineKeyboardButton(
+            text=(
+                "💬 Предлагать отзывы: ✅"
+                if feedback_enabled else "💬 Предлагать отзывы: ❌"
+            ),
+            callback_data="feedback_toggle",
+        )],
         [InlineKeyboardButton(text="⌂ Главное меню", callback_data="user_home")],
     ]
     if show_admin_return:
@@ -304,6 +317,61 @@ def attendance_keyboard(post_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="Да", callback_data=f"attendance:{post_id}:1"),
         InlineKeyboardButton(text="Нет", callback_data=f"attendance:{post_id}:0"),
     ]])
+
+
+def feedback_offer_keyboard(post_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="Да", callback_data=f"feedback_offer:{post_id}:yes"
+            ),
+            InlineKeyboardButton(
+                text="Нет", callback_data=f"feedback_offer:{post_id}:no"
+            ),
+        ],
+        [InlineKeyboardButton(
+            text="Никогда не спрашивать больше",
+            callback_data=f"feedback_offer:{post_id}:never",
+        )],
+    ])
+
+
+def feedback_skip_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="Пропустить", callback_data="feedback_skip"
+    )]])
+
+
+def admin_feedbacks_keyboard(
+    feedback_entries: list[dict], page: int, pages: int
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for entry in feedback_entries:
+        author = (
+            entry.get("full_name")
+            or entry.get("telegram_username")
+            or f"Пользователь {entry['user_id']}"
+        )
+        rows.append([InlineKeyboardButton(
+            text=f"Отзыв #{entry['id']} · {author[:42]}",
+            callback_data=f"admin_feedback_item:{entry['id']}:{page}",
+        )])
+    rows.append(_navigation_row("admin_feedback_page", page, pages))
+    rows.append([InlineKeyboardButton(
+        text="← Панель администратора", callback_data="admin_home"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_feedback_detail_keyboard(feedback_id: int, page: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="← К отзывам", callback_data=f"admin_feedback_page:{page}"
+        )],
+        [InlineKeyboardButton(
+            text="← Панель администратора", callback_data="admin_home"
+        )],
+    ])
 
 
 def confirm_event_cancellation_keyboard(post_id: int) -> InlineKeyboardMarkup:

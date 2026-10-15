@@ -132,6 +132,56 @@ def participants_rich_message(
     })
 
 
+def feedback_author_label(feedback: dict) -> str:
+    full_name = " ".join((feedback.get("full_name") or "").split())
+    if full_name:
+        return f"{full_name} ({telegram_profile_label(feedback)})"
+    telegram = telegram_profile_label(feedback)
+    if telegram != "имя профиля не указано":
+        return telegram
+    return f"Пользователь #{feedback['user_id']}"
+
+
+def feedback_event_label(feedback: dict) -> str:
+    if feedback.get("post_id") is None:
+        return "Общий отзыв (мероприятие не указано)"
+    return (
+        f"Мероприятие #{feedback['post_id']}: "
+        f"«{event_title({'title': feedback.get('title'), 'text': feedback.get('post_text')})}»"
+    )
+
+
+def _short_feedback_text(text: str, limit: int = 500) -> str:
+    clean = text.strip()
+    return f"{clean[:limit - 1]}…" if len(clean) > limit else clean
+
+
+def feedbacks_list_text(feedback_entries: list[dict], page: int, pages: int, local_tz: ZoneInfo) -> str:
+    lines = [f"💬 Отзывы · страница {page + 1}/{pages}"]
+    if not feedback_entries:
+        return "\n".join([*lines, "", "Отзывов пока нет."])
+    for index, feedback in enumerate(feedback_entries, 1):
+        lines.extend((
+            f"\n{index}. {_short_feedback_text(feedback_author_label(feedback), 80)}",
+            f"   {format_local(feedback['created_at'], local_tz)}",
+            f"   {_short_feedback_text(feedback_event_label(feedback), 140)}",
+            _short_feedback_text(feedback["feedback_text"], 350),
+        ))
+    return "\n".join(lines)
+
+
+def feedback_detail_text(feedback: dict, local_tz: ZoneInfo) -> str:
+    return "\n".join((
+        f"💬 Отзыв #{feedback['id']}",
+        "",
+        f"Автор: {feedback_author_label(feedback)}",
+        f"Время: {format_local(feedback['created_at'], local_tz)}",
+        feedback_event_label(feedback),
+        "",
+        feedback["feedback_text"],
+    ))
+
+
 def remove_media(paths: list[str]) -> None:
     for path in paths:
         try:

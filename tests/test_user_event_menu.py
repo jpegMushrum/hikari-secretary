@@ -92,6 +92,7 @@ class UserEventMenuTests(unittest.TestCase):
                 "starts_at": starts_at.isoformat(),
             }),
             registration=AsyncMock(return_value=None),
+            feedback_flow=AsyncMock(return_value=None),
             profile=AsyncMock(return_value={
                 "full_name": "Иван Иванов",
                 "is_russian_citizen": 1,

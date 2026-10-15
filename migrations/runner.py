@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 
 def _columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -236,6 +236,39 @@ def migration_005_ai_topic_settings(db: sqlite3.Connection) -> None:
     )
 
 
+def migration_006_feedback(db: sqlite3.Connection) -> None:
+    profile_columns = _columns(db, "user_profiles")
+    if "feedback_enabled" not in profile_columns:
+        db.execute(
+            "ALTER TABLE user_profiles "
+            "ADD COLUMN feedback_enabled INTEGER NOT NULL DEFAULT 1"
+        )
+    db.execute(
+        "UPDATE user_profiles SET feedback_enabled=1 WHERE feedback_enabled IS NULL"
+    )
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS feedback_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_entries_created
+        ON feedback_entries(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_feedback_entries_user
+        ON feedback_entries(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS feedback_flows (
+            user_id INTEGER PRIMARY KEY,
+            post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "baseline", migration_001_baseline),
     (2, "profile_v2", migration_002_profile_v2),
@@ -246,6 +279,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
     ),
     (4, "ai_preparation", migration_004_ai_preparation),
     (5, "ai_topic_settings", migration_005_ai_topic_settings),
+    (6, "feedback", migration_006_feedback),
 )
 
 
