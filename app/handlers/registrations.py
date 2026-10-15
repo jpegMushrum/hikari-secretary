@@ -14,6 +14,7 @@ from ..keyboards import (
     available_events_keyboard,
     binary_registration_keyboard,
     confirm_event_cancellation_keyboard,
+    participants_keyboard,
     profile_answer_keyboard,
     profile_keyboard,
     registration_cancel_keyboard,
@@ -23,9 +24,9 @@ from ..keyboards import (
 )
 from ..presentation import (
     event_title,
+    participants_rich_message,
     reminder_offset_label,
     telegram_identity_values,
-    telegram_profile_label,
 )
 from ..runtime import AppContext
 
@@ -305,36 +306,27 @@ class RegistrationHandlers:
     async def show_participants(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        post_id = int(callback.data.split(":")[1])
-        rows = await self.context.db.event_registrations(post_id)
-        if not rows:
+        parts = callback.data.split(":")
+        post_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 0
+        result = await self.context.db.event_registrations_page(post_id, page)
+        if not result.items:
             await callback.message.answer("На это мероприятие пока никто не зарегистрирован.")
         else:
-            lines = [f"Участники мероприятия #{post_id}:"]
-            for index, row in enumerate(rows, 1):
-                attendance = " — отменил(а) регистрацию" if row["status"] == "cancelled" else ""
-                if row["status"] == "registered" and row["attended"] is not None:
-                    attendance = " — был(а)" if row["attended"] else " — не был(а)"
-                citizen = (
-                    "да" if row["is_russian_citizen"] == 1 else
-                    "нет" if row["is_russian_citizen"] == 0 else "не указано"
-                )
-                student = (
-                    "да" if row["is_itmo_student"] == 1 else
-                    "нет" if row["is_itmo_student"] == 0 else "не указано"
-                )
-                reminder = (
-                    reminder_offset_label(row["reminder_offset_minutes"])
-                    if row["reminders_enabled"] else "выключено"
-                )
-                lines.append(
-                    f"{index}. {row['full_name']}\n"
-                    f"   Telegram: {telegram_profile_label(row)} · ID {row['user_id']}\n"
-                    f"   Гражданин РФ: {citizen} · Студент ИТМО: {student}\n"
-                    f"   Напоминание: {reminder}{attendance}"
-                )
-            for offset in range(0, len(lines), 40):
-                await callback.message.answer("\n".join(lines[offset:offset + 40]))
+            await self.context.bot.send_rich_message(
+                callback.message.chat.id,
+                participants_rich_message(
+                    post_id,
+                    event_title(result.items[0]),
+                    result.items,
+                    result.page,
+                    result.pages,
+                    self.context.settings.timezone,
+                ),
+                reply_markup=participants_keyboard(
+                    post_id, result.page, result.pages
+                ),
+            )
         await callback.answer()
 
     async def ask_cancel_event(self, callback: CallbackQuery) -> None:

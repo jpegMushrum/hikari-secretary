@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aiogram.exceptions import TelegramForbiddenError
-from aiogram.types import User
+from aiogram.types import InputRichMessage, User
+
+from .formatting import format_local
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +51,85 @@ def telegram_profile_label(profile: dict) -> str:
         if part
     )
     return display_name or "имя профиля не указано"
+
+
+def participant_status_label(participant: dict) -> str:
+    if participant["status"] == "cancelled":
+        return "отменён"
+    if participant["attended"] is True or participant["attended"] == 1:
+        return "был"
+    if participant["attended"] is False or participant["attended"] == 0:
+        return "не был"
+    return "зарегистрирован"
+
+
+def _yes_no_table_value(value: int | None) -> str:
+    if value is None:
+        return "—"
+    return "✅" if value else "❌"
+
+
+def _short_table_value(value: str, limit: int) -> str:
+    clean = " ".join(value.split())
+    return f"{clean[:limit - 1]}…" if len(clean) > limit else (clean or "—")
+
+
+def _table_cell(text: str, *, header: bool = False) -> dict:
+    return {
+        "text": text,
+        "align": "left",
+        "valign": "top",
+        "is_header": header,
+    }
+
+
+def participants_rich_message(
+    post_id: int,
+    title: str,
+    participants: list[dict],
+    page: int,
+    pages: int,
+    local_tz: ZoneInfo,
+) -> InputRichMessage:
+    cells = [[
+        _table_cell("ФИО", header=True),
+        _table_cell("Telegram", header=True),
+        _table_cell("Статус", header=True),
+        _table_cell("Время\nрег./отм.", header=True),
+        _table_cell("РФ", header=True),
+        _table_cell("ИТМО", header=True),
+    ]]
+    for participant in participants:
+        timestamp = (
+            participant["cancelled_at"]
+            if participant["status"] == "cancelled"
+            else participant["registered_at"]
+        )
+        cells.append([
+            _table_cell(_short_table_value(participant["full_name"], 32)),
+            _table_cell(_short_table_value(telegram_profile_label(participant), 24)),
+            _table_cell(participant_status_label(participant)),
+            _table_cell(format_local(timestamp, local_tz) if timestamp else "—"),
+            _table_cell(_yes_no_table_value(participant["is_russian_citizen"])),
+            _table_cell(_yes_no_table_value(participant["is_itmo_student"])),
+        ])
+    return InputRichMessage.model_validate({
+        "blocks": [
+            {
+                "type": "heading",
+                "text": f"Участники мероприятия #{post_id}: «{title}»",
+                "size": 2,
+            },
+            {
+                "type": "table",
+                "caption": f"Страница {page + 1}/{pages}",
+                "cells": cells,
+                "is_bordered": True,
+                "is_striped": True,
+                "is_compact": True,
+            },
+        ]
+    })
 
 
 def remove_media(paths: list[str]) -> None:

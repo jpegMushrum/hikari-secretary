@@ -401,12 +401,63 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(participants[0]["telegram_first_name"], "Пирожок")
             self.assertEqual(participants[0]["is_russian_citizen"], 1)
             self.assertEqual(participants[0]["is_itmo_student"], 0)
+            self.assertIsNotNone(participants[0]["registered_at"])
             self.assertTrue(await db.cancel_registration(200, post_id))
             self.assertEqual(await db.user_registrations(200), [])
             available = await db.available_events(200)
             self.assertEqual([row["post_id"] for row in available], [post_id])
             participants = await db.event_registrations(post_id)
             self.assertEqual(participants[0]["status"], "cancelled")
+            self.assertIsNotNone(participants[0]["cancelled_at"])
+
+    def test_participant_pages_keep_registration_and_cancellation_times(self):
+        asyncio.run(self._participant_pages_keep_registration_and_cancellation_times())
+
+    async def _participant_pages_keep_registration_and_cancellation_times(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            post_id = await db.create_post(100, "Встреча", [], [])
+            await db.toggle_delivery(post_id, "channel", "Канал", "-100123")
+            starts_at = datetime.now(timezone.utc) + timedelta(days=1)
+            self.assertTrue(await db.set_event(
+                post_id, "Встреча", starts_at, starts_at + timedelta(hours=2)
+            ))
+            self.assertTrue(await db.schedule(post_id, datetime.now(timezone.utc)))
+            delivery = await db.claim_due()
+            await db.delivery_succeeded(delivery.id, "event-message")
+
+            for user_id in range(1, 12):
+                await db.save_profile(
+                    user_id,
+                    f"Участник {user_id:02d}",
+                    f"user{user_id}",
+                    "Участник",
+                    str(user_id),
+                )
+                await db.update_profile_answers(
+                    user_id,
+                    is_russian_citizen=user_id % 2 == 0,
+                    is_itmo_student=user_id % 3 == 0,
+                )
+                self.assertTrue(await db.register(user_id, post_id, None))
+            self.assertTrue(await db.cancel_registration(3, post_id))
+
+            first = await db.event_registrations_page(post_id, 0, page_size=5)
+            third = await db.event_registrations_page(post_id, 2, page_size=5)
+            self.assertEqual(first.total, 11)
+            self.assertEqual(first.pages, 3)
+            self.assertEqual(len(first.items), 5)
+            self.assertEqual(len(third.items), 1)
+            self.assertEqual(first.items[0]["title"], "Встреча")
+            cancelled = next(
+                row for row in [*first.items, *(
+                    await db.event_registrations_page(post_id, 1, page_size=5)
+                ).items, *third.items]
+                if row["user_id"] == 3
+            )
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertIsNotNone(cancelled["registered_at"])
+            self.assertIsNotNone(cancelled["cancelled_at"])
 
     def test_attendance_is_requested_only_for_active_registration(self):
         asyncio.run(self._attendance_is_requested_only_for_active_registration())

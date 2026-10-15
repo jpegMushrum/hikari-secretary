@@ -863,7 +863,7 @@ class Database:
     async def event_registrations(self, post_id: int) -> list[dict]:
         async with self.connect() as db:
             rows = await (await db.execute(
-                """SELECT r.user_id,r.registered_at,r.reminders_enabled,
+                """SELECT r.user_id,r.registered_at,r.cancelled_at,r.reminders_enabled,
                           r.reminder_offset_minutes,r.status,r.attended,
                           u.full_name,u.telegram_username,u.telegram_first_name,
                           u.telegram_last_name,u.is_russian_citizen,
@@ -875,6 +875,34 @@ class Database:
                 (post_id,),
             )).fetchall()
             return [dict(row) for row in rows]
+
+    async def event_registrations_page(
+        self, post_id: int, page: int, page_size: int = 10
+    ) -> Page:
+        page = max(0, page)
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                "SELECT COUNT(*) AS n FROM registrations WHERE post_id=?",
+                (post_id,),
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            rows = await (await db.execute(
+                """SELECT r.user_id,r.registered_at,r.cancelled_at,r.status,r.attended,
+                          e.title,p.text,
+                          u.full_name,u.telegram_username,u.telegram_first_name,
+                          u.telegram_last_name,u.is_russian_citizen,
+                          u.is_itmo_student
+                   FROM registrations r
+                   JOIN events e ON e.post_id=r.post_id
+                   JOIN posts p ON p.id=r.post_id
+                   JOIN user_profiles u ON u.user_id=r.user_id
+                   WHERE r.post_id=?
+                   ORDER BY u.full_name COLLATE NOCASE,r.user_id
+                   LIMIT ? OFFSET ?""",
+                (post_id, page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
 
     async def due_reminders(self) -> list[dict]:
         now = utc_now()

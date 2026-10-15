@@ -264,6 +264,16 @@ def admin_events_page_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def participants_keyboard(
+    post_id: int, page: int, pages: int
+) -> InlineKeyboardMarkup:
+    rows = [_navigation_row(f"participants:{post_id}", page, pages)]
+    rows.append([InlineKeyboardButton(
+        text="← Мероприятия", callback_data="admin_registrations"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def profile_keyboard(show_admin_return: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="✏️ Изменить профиль", callback_data="edit_profile")],
