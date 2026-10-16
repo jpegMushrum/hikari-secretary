@@ -12,6 +12,19 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _language_values(topic: dict, collection: str, field: str) -> tuple[str, ...]:
+    values = topic.get(collection)
+    if not isinstance(values, list):
+        return ()
+    return tuple(
+        value
+        for item in values
+        if isinstance(item, dict)
+        and isinstance((value := item.get(field)), str)
+        and (value := value.strip())
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DailyTopicJob:
     id: int
@@ -198,7 +211,12 @@ class DailyTopicRepository:
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
             if title and vocabulary_theme:
-                history.append(TopicHistoryItem(title, vocabulary_theme))
+                history.append(TopicHistoryItem(
+                    title,
+                    vocabulary_theme,
+                    grammar_patterns=_language_values(topic, "grammar", "pattern"),
+                    vocabulary_words=_language_values(topic, "vocabulary", "japanese"),
+                ))
         return history
 
     async def replace_topic_for_post(self, post_id: int, topic: dict) -> bool:

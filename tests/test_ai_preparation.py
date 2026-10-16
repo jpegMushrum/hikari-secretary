@@ -233,7 +233,12 @@ class DailyTopicPreparationTests(unittest.TestCase):
                 job.id, post_id, self._topic().as_json_value()
             )
             self.assertEqual(await repository.recent_history(), [
-                TopicHistoryItem("Любимые блюда", "Приготовление еды")
+                TopicHistoryItem(
+                    "Любимые блюда",
+                    "Приготовление еды",
+                    grammar_patterns=("〜ことが好き",),
+                    vocabulary_words=("料理",),
+                )
             ])
 
     def test_manual_publication_is_recorded_in_history_idempotently(self) -> None:
@@ -254,7 +259,12 @@ class DailyTopicPreparationTests(unittest.TestCase):
 
             self.assertEqual(first, second)
             self.assertEqual(await repository.recent_history(), [
-                TopicHistoryItem("Любимые блюда", "Приготовление еды")
+                TopicHistoryItem(
+                    "Любимые блюда",
+                    "Приготовление еды",
+                    grammar_patterns=("〜ことが好き",),
+                    vocabulary_words=("料理",),
+                )
             ])
 
     def test_admin_generation_preferences_are_persistent(self) -> None:
@@ -357,7 +367,12 @@ class DailyTopicPreparationTests(unittest.TestCase):
         )
         payload = provider._payload(
             (
-                TopicHistoryItem("Путешествия", "Транспорт и билеты"),
+                TopicHistoryItem(
+                    "Путешествия",
+                    "Транспорт и билеты",
+                    grammar_patterns=("〜ながら",),
+                    vocabulary_words=("切符",),
+                ),
                 TopicHistoryItem("Ресторан", "Заказ еды"),
             ),
             TopicGenerationOptions("N4", "Короткие разговорные фразы"),
@@ -366,12 +381,36 @@ class DailyTopicPreparationTests(unittest.TestCase):
         prompt = payload["messages"][1]["content"]
         self.assertIn("Транспорт и билеты", prompt)
         self.assertIn("Заказ еды", prompt)
+        self.assertIn("〜ながら", prompt)
+        self.assertIn("切符", prompt)
+        self.assertIn("мягкий ориентир", prompt)
         self.assertIn("ровно 5 вопросов", prompt)
         self.assertIn("ровно 10 слов", prompt)
         system_prompt = payload["messages"][0]["content"]
         self.assertIn("JLPT N4", system_prompt)
         self.assertIn("Короткие разговорные фразы", system_prompt)
         self.assertEqual(payload["response_format"], {"type": "json_object"})
+
+    def test_service_allows_reusing_recent_language_when_topic_is_new(self) -> None:
+        topic = self._topic()
+        provider = SimpleNamespace(generate=AsyncMock(return_value=topic))
+        publications = SimpleNamespace(create_scheduled=AsyncMock(return_value=16))
+        service = DailyTopicService(provider, publications, "ai_chat")
+
+        post_id, _ = asyncio.run(service.generate_and_schedule(
+            history=(TopicHistoryItem(
+                "Путешествия",
+                "Транспорт",
+                grammar_patterns=("〜ことが好き",),
+                vocabulary_words=("料理",),
+            ),),
+            creator_id=100,
+            scheduled_at=datetime.now(timezone.utc),
+            idempotency_key="daily-topic-job:soft-variety",
+        ))
+
+        self.assertEqual(post_id, 16)
+        publications.create_scheduled.assert_awaited_once()
 
     def test_target_matches_only_configured_chat_and_topic(self) -> None:
         target = Target(0, "ai", "AI chat", "-100123", 42)

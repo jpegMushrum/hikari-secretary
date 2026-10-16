@@ -24,6 +24,7 @@ class DeepSeekError(RuntimeError):
 
 class DeepSeekTopicProvider:
     MAX_OUTPUT_TOKENS = 4000
+    LANGUAGE_VARIETY_HISTORY_SIZE = 14
 
     def __init__(
         self,
@@ -143,6 +144,14 @@ class DeepSeekTopicProvider:
             }
             for item in history
         ]
+        recent_language = [
+            {
+                "grammar_patterns": list(item.grammar_patterns),
+                "vocabulary_words": list(item.vocabulary_words),
+            }
+            for item in history[:self.LANGUAGE_VARIETY_HISTORY_SIZE]
+            if item.grammar_patterns or item.vocabulary_words
+        ]
         system_prompt = (
             "Ты составляешь ежедневные материалы для разговорного клуба японского "
             "языка. Верни только JSON без Markdown. Создай одну практичную тему для "
@@ -153,6 +162,9 @@ class DeepSeekTopicProvider:
             "Не упрощай материал до более низкого уровня и не делай его сложнее. "
             "Тема может быть бытовой, но вопросы, лексика, примеры и грамматика "
             "должны реально тренировать целевой уровень. "
+            "Старайся выбирать грамматику и японскую лексику, которые не "
+            "встречались в недавних материалах. Это мягкий ориентир, а не "
+            "запрет: естественный повтор допустим, если он действительно уместен. "
             "Пиши компактно: без вступительных фраз, повторов и пояснений вне JSON. "
             f"Укажи {level} в поле jlpt_level."
         )
@@ -176,6 +188,9 @@ class DeepSeekTopicProvider:
         user_prompt = (
             "Уже использованные темы:\n"
             f"{json.dumps(used, ensure_ascii=False)}\n\n"
+            "Недавно использованные языковые элементы "
+            "(мягкий ориентир для разнообразия):\n"
+            f"{json.dumps(recent_language, ensure_ascii=False)}\n\n"
             "Сформируй JSON строго такого вида:\n"
             "{\n"
             f'  "jlpt_level": "{level}",\n'

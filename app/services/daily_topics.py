@@ -28,6 +28,8 @@ class GrammarPoint:
 class TopicHistoryItem:
     conversation_topic: str
     vocabulary_theme: str
+    grammar_patterns: tuple[str, ...] = ()
+    vocabulary_words: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
