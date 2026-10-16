@@ -8,11 +8,13 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message, User
 
 from ..access import AdminAccess
+from ..db import EVENT_REGISTRATION_SORTS, PERSON_STATISTICS_SORTS
 from ..formatting import format_local
 from ..keyboards import (
     admin_feedback_detail_keyboard,
     admin_feedbacks_keyboard,
     admin_events_page_keyboard,
+    admin_statistics_keyboard,
     available_events_keyboard,
     binary_registration_keyboard,
     confirm_event_cancellation_keyboard,
@@ -27,9 +29,11 @@ from ..keyboards import (
     user_menu_keyboard,
 )
 from ..presentation import (
+    admin_events_rich_message,
     event_title,
     feedback_detail_text,
-    feedbacks_list_text,
+    feedbacks_rich_message,
+    people_statistics_rich_message,
     participants_rich_message,
     reminder_offset_label,
     telegram_identity_values,
@@ -49,6 +53,7 @@ class RegistrationHandlers:
         router.message.register(self.profile, Command("profile"))
         router.message.register(self.admin_registrations, Command("registrations"))
         router.message.register(self.admin_feedback, Command("feedback"))
+        router.message.register(self.admin_statistics, Command("statistics"))
         router.callback_query.register(
             self.admin_registrations_button, F.data == "admin_registrations"
         )
@@ -90,10 +95,17 @@ class RegistrationHandlers:
             self.show_admin_feedback, F.data == "admin_feedback"
         )
         router.callback_query.register(
+            self.show_admin_statistics, F.data == "admin_statistics"
+        )
+        router.callback_query.register(
             self.paginate_admin_feedback, F.data.startswith("admin_feedback_page:")
         )
         router.callback_query.register(
             self.show_feedback_detail, F.data.startswith("admin_feedback_item:")
+        )
+        router.callback_query.register(
+            self.paginate_admin_statistics,
+            F.data.startswith("admin_statistics:"),
         )
         router.callback_query.register(self.dismiss_cancel_event, F.data == "dismiss_cancel_event")
         router.callback_query.register(self.noop, F.data == "noop")
@@ -267,30 +279,33 @@ class RegistrationHandlers:
     async def admin_registrations(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
-        await self._send_admin_events(message.answer)
+        await self._send_admin_events(message.chat.id)
 
     async def admin_registrations_button(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        await self._send_admin_events(callback.message.answer)
+        await self._send_admin_events(callback.message.chat.id)
         await callback.answer()
 
     async def admin_feedback(self, message: Message) -> None:
         if not await self.access.guard_message(message):
             return
-        await self._send_admin_feedbacks(0, message.answer)
+        await self._send_admin_feedbacks(message.chat.id, 0)
 
     async def show_admin_feedback(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        await self._send_admin_feedbacks(0, callback.message.answer)
+        await self._send_admin_feedbacks(callback.message.chat.id, 0)
         await callback.answer()
 
     async def paginate_admin_feedback(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        page = int(callback.data.split(":")[1])
-        await self._send_admin_feedbacks(page, callback.message.edit_text)
+        _, page_raw = callback.data.split(":", 1)
+        if not page_raw.isdigit():
+            await callback.answer("Некорректная страница", show_alert=True)
+            return
+        await self._send_admin_feedbacks(callback.message.chat.id, int(page_raw))
         await callback.answer()
 
     async def show_feedback_detail(self, callback: CallbackQuery) -> None:
@@ -301,7 +316,7 @@ class RegistrationHandlers:
         if not feedback:
             await callback.answer("Отзыв не найден", show_alert=True)
             return
-        await callback.message.edit_text(
+        await callback.message.answer(
             feedback_detail_text(feedback, self.context.settings.timezone),
             reply_markup=admin_feedback_detail_keyboard(
                 int(feedback_raw), int(page_raw)
@@ -309,10 +324,11 @@ class RegistrationHandlers:
         )
         await callback.answer()
 
-    async def _send_admin_feedbacks(self, page: int, send) -> None:
+    async def _send_admin_feedbacks(self, chat_id: int, page: int) -> None:
         result = await self.context.db.feedback_entries_page(page)
-        await send(
-            feedbacks_list_text(
+        await self.context.bot.send_rich_message(
+            chat_id,
+            feedbacks_rich_message(
                 result.items, result.page, result.pages,
                 self.context.settings.timezone,
             ),
@@ -321,59 +337,102 @@ class RegistrationHandlers:
             ),
         )
 
+    async def admin_statistics(self, message: Message) -> None:
+        if not await self.access.guard_message(message):
+            return
+        await self._send_admin_statistics(message.chat.id, "name", 0)
+
+    async def show_admin_statistics(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        await self._send_admin_statistics(callback.message.chat.id, "name", 0)
+        await callback.answer()
+
+    async def paginate_admin_statistics(self, callback: CallbackQuery) -> None:
+        if not await self.access.guard_callback(callback):
+            return
+        parts = callback.data.split(":")
+        if len(parts) != 3:
+            await callback.answer("Некорректная сортировка", show_alert=True)
+            return
+        _, sort_by, page_raw = parts
+        if sort_by not in PERSON_STATISTICS_SORTS or not page_raw.isdigit():
+            await callback.answer("Некорректная сортировка", show_alert=True)
+            return
+        await self._send_admin_statistics(
+            callback.message.chat.id, sort_by, int(page_raw)
+        )
+        await self._delete_replaced_rich_message(callback.message)
+        await callback.answer()
+
+    async def _send_admin_statistics(
+        self, chat_id: int, sort_by: str, page: int
+    ) -> None:
+        result = await self.context.db.people_statistics_page(sort_by, page)
+        await self.context.bot.send_rich_message(
+            chat_id,
+            people_statistics_rich_message(
+                result.items,
+                result.page,
+                result.pages,
+                sort_by,
+                self.context.settings.timezone,
+            ),
+            reply_markup=admin_statistics_keyboard(
+                sort_by, result.page, result.pages
+            ),
+        )
+
     async def paginate_admin_events(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
             return
-        _, kind, page_raw = callback.data.split(":")
+        parts = callback.data.split(":")
+        if len(parts) != 3 or parts[1] not in {"active", "past"} or not parts[2].isdigit():
+            await callback.answer("Некорректная страница", show_alert=True)
+            return
+        _, kind, page_raw = parts
         if kind == "past":
-            await self._send_admin_events_page(
-                True, int(page_raw), callback.message.edit_text
-            )
+            await self._send_admin_events_page(callback.message.chat.id, True, int(page_raw))
         else:
-            await self._send_admin_events(callback.message.edit_text)
+            await self._send_admin_events(callback.message.chat.id)
+        await self._delete_replaced_rich_message(callback.message)
         await callback.answer()
 
     async def show_past_events(self, callback: CallbackQuery) -> None:
         """Compatibility handler for buttons sent before paginated lists existed."""
         if not await self.access.guard_callback(callback):
             return
-        await self._send_admin_events_page(True, 0, callback.message.edit_text)
+        await self._send_admin_events_page(callback.message.chat.id, True, 0)
+        await self._delete_replaced_rich_message(callback.message)
         await callback.answer()
 
-    async def _send_admin_events_page(self, past: bool, page: int, send) -> None:
+    async def _send_admin_events_page(self, chat_id: int, past: bool, page: int) -> None:
         result = await self.context.db.admin_events_page(past, page)
-        heading = "Прошедшие мероприятия" if past else "Активные мероприятия"
-        lines = [f"{heading} · страница {result.page + 1}/{result.pages}"]
-        if not result.items:
-            lines.append("\nСписок пуст.")
-        for index, row in enumerate(result.items, 1):
-            starts = format_local(row["starts_at"], self.context.settings.timezone)
-            lines.append(
-                f"\n{index}. {event_title(row)}\n"
-                f"   {starts}\n"
-                f"   Зарегистрировано: {row['registrations']}"
-            )
-        await send(
-            "\n".join(lines),
+        await self.context.bot.send_rich_message(
+            chat_id,
+            admin_events_rich_message(
+                result.items,
+                past,
+                result.page,
+                result.pages,
+                self.context.settings.timezone,
+            ),
             reply_markup=admin_events_page_keyboard(
                 result.items, result.page, result.pages, past
             ),
         )
 
-    async def _send_admin_events(self, send) -> None:
+    async def _send_admin_events(self, chat_id: int) -> None:
         events = await self.context.db.admin_events()
-        lines = ["Активные мероприятия"]
-        if not events:
-            lines.append("\nСписок пуст.")
-        for index, row in enumerate(events, 1):
-            starts = format_local(row["starts_at"], self.context.settings.timezone)
-            lines.append(
-                f"\n{index}. {event_title(row)}\n"
-                f"   {starts}\n"
-                f"   Зарегистрировано: {row['registrations']}"
-            )
-        await send(
-            "\n".join(lines),
+        await self.context.bot.send_rich_message(
+            chat_id,
+            admin_events_rich_message(
+                events,
+                False,
+                0,
+                1,
+                self.context.settings.timezone,
+            ),
             reply_markup=admin_events_page_keyboard(events, 0, 1, False),
         )
 
@@ -381,9 +440,27 @@ class RegistrationHandlers:
         if not await self.access.guard_callback(callback):
             return
         parts = callback.data.split(":")
+        if len(parts) not in {2, 3, 4} or not parts[1].isdigit():
+            await callback.answer("Некорректный список участников", show_alert=True)
+            return
         post_id = int(parts[1])
-        page = int(parts[2]) if len(parts) > 2 else 0
-        result = await self.context.db.event_registrations_page(post_id, page)
+        sort_by = "name"
+        page = 0
+        refreshes_table = len(parts) > 2
+        if len(parts) == 3:
+            if not parts[2].isdigit():
+                await callback.answer("Некорректная страница", show_alert=True)
+                return
+            page = int(parts[2])
+        elif len(parts) == 4:
+            _, _, sort_by, page_raw = parts
+            if sort_by not in EVENT_REGISTRATION_SORTS or not page_raw.isdigit():
+                await callback.answer("Некорректная сортировка", show_alert=True)
+                return
+            page = int(page_raw)
+        result = await self.context.db.event_registrations_page(
+            post_id, page, sort_by=sort_by
+        )
         if not result.items:
             await callback.message.answer("На это мероприятие пока никто не зарегистрирован.")
         else:
@@ -396,12 +473,26 @@ class RegistrationHandlers:
                     result.page,
                     result.pages,
                     self.context.settings.timezone,
+                    sort_by,
                 ),
                 reply_markup=participants_keyboard(
-                    post_id, result.page, result.pages
+                    post_id, result.page, result.pages, sort_by
                 ),
             )
+            if refreshes_table:
+                await self._delete_replaced_rich_message(callback.message)
         await callback.answer()
+
+    async def _delete_replaced_rich_message(self, message: Message) -> None:
+        try:
+            await self.context.bot.delete_message(message.chat.id, message.message_id)
+        except Exception:
+            log.warning(
+                "Could not remove superseded Rich Message: chat_id=%s message_id=%s",
+                message.chat.id,
+                message.message_id,
+                exc_info=True,
+            )
 
     async def ask_cancel_event(self, callback: CallbackQuery) -> None:
         if not await self.access.guard_callback(callback):
@@ -828,14 +919,11 @@ class RegistrationHandlers:
             return
         saved = await self.context.db.save_feedback_from_flow(message.from_user.id, text)
         if not saved:
-            await message.answer("Сценарий отзыва уже завершён. Откройте его снова в профиле.")
-            return
-        if saved["post_id"] is None:
             await message.answer(
-                "Спасибо за отзыв! Он сохранён как общий, без привязки к мероприятию."
+                "Сценарий отзыва уже завершён. Откройте его снова в главном меню."
             )
-        else:
-            await message.answer("Спасибо за отзыв!")
+            return
+        await message.answer("Спасибо за отзыв!")
 
     async def noop(self, callback: CallbackQuery) -> None:
         await callback.answer()

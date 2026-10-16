@@ -28,7 +28,10 @@ class UserEventMenuTests(unittest.TestCase):
         button = markup.inline_keyboard[0][0]
         self.assertEqual(button.text, "🎟 Найти мероприятие")
         self.assertEqual(button.callback_data, "available_events")
-        profile_button = markup.inline_keyboard[2][0]
+        feedback_button = markup.inline_keyboard[2][0]
+        self.assertEqual(feedback_button.text, "💬 Оставить обратную связь")
+        self.assertEqual(feedback_button.callback_data, "feedback_manual")
+        profile_button = markup.inline_keyboard[3][0]
         self.assertEqual(profile_button.text, "👤 Мой профиль")
         self.assertEqual(profile_button.callback_data, "profile_settings")
 

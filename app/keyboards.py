@@ -90,6 +90,9 @@ def user_menu_keyboard(show_admin_return: bool = False) -> InlineKeyboardMarkup:
             text="🎟 Найти мероприятие", callback_data="available_events"
         )],
         [InlineKeyboardButton(text="📅 Мои мероприятия", callback_data="my_events")],
+        [InlineKeyboardButton(
+            text="💬 Оставить обратную связь", callback_data="feedback_manual"
+        )],
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile_settings")],
     ]
     if show_admin_return:
@@ -106,6 +109,9 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
         )],
         [InlineKeyboardButton(text="🤖 ИИ", callback_data="admin_ai_menu")],
         [InlineKeyboardButton(text="💬 Отзывы", callback_data="admin_feedback")],
+        [InlineKeyboardButton(
+            text="👥 Статистика людей", callback_data="admin_statistics"
+        )],
         [InlineKeyboardButton(
             text="👤 Интерфейс пользователя", callback_data="show_user_interface"
         )],
@@ -245,7 +251,7 @@ def admin_events_page_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
     for index, event in enumerate(events, 1):
         row = [InlineKeyboardButton(
-            text=f"Участники · {index}",
+            text=f"Участники · #{event['post_id']}",
             callback_data=f"participants:{event['post_id']}",
         )]
         if not past:
@@ -266,9 +272,21 @@ def admin_events_page_keyboard(
 
 
 def participants_keyboard(
-    post_id: int, page: int, pages: int
+    post_id: int, page: int, pages: int, sort_by: str = "name"
 ) -> InlineKeyboardMarkup:
-    rows = [_navigation_row(f"participants:{post_id}", page, pages)]
+    sort_options = (
+        ("name", "ФИО"),
+        ("pass", "Нужен пропуск"),
+        ("registered_at", "Время регистрации"),
+    )
+    rows = [[
+        InlineKeyboardButton(
+            text=f"{'✓ ' if key == sort_by else ''}{label}",
+            callback_data=f"participants:{post_id}:{key}:0",
+        )
+        for key, label in sort_options
+    ]]
+    rows.append(_navigation_row(f"participants:{post_id}:{sort_by}", page, pages))
     rows.append([InlineKeyboardButton(
         text="← Мероприятия", callback_data="admin_registrations"
     )])
@@ -280,9 +298,6 @@ def profile_keyboard(
 ) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="✏️ Изменить профиль", callback_data="edit_profile")],
-        [InlineKeyboardButton(
-            text="💬 Оставить обратную связь", callback_data="feedback_manual"
-        )],
         [InlineKeyboardButton(
             text=(
                 "💬 Предлагать отзывы: ✅"
@@ -372,6 +387,28 @@ def admin_feedback_detail_keyboard(feedback_id: int, page: int) -> InlineKeyboar
             text="← Панель администратора", callback_data="admin_home"
         )],
     ])
+
+
+def admin_statistics_keyboard(
+    sort_by: str, page: int, pages: int
+) -> InlineKeyboardMarkup:
+    sort_options = (
+        ("name", "ФИО"),
+        ("visits", "Посещения"),
+        ("last_visit", "Последний визит"),
+    )
+    rows = [[
+        InlineKeyboardButton(
+            text=f"{'✓ ' if key == sort_by else ''}{label}",
+            callback_data=f"admin_statistics:{key}:0",
+        )
+        for key, label in sort_options
+    ]]
+    rows.append(_navigation_row(f"admin_statistics:{sort_by}", page, pages))
+    rows.append([InlineKeyboardButton(
+        text="← Панель администратора", callback_data="admin_home"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def confirm_event_cancellation_keyboard(post_id: int) -> InlineKeyboardMarkup:

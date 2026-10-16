@@ -67,6 +67,7 @@ class CoreHandlersTests(unittest.TestCase):
             "admin_events_menu",
             "admin_ai_menu",
             "admin_feedback",
+            "admin_statistics",
             "show_user_interface",
             "admin_help",
         })
@@ -115,6 +116,12 @@ class TelegramMenuTests(unittest.TestCase):
         asyncio.run(secretary._configure_telegram_menu())
 
         self.assertEqual(bot.set_my_commands.await_count, 2)
+        commands = {
+            command.command
+            for call in bot.set_my_commands.await_args_list
+            for command in call.args[0]
+        }
+        self.assertIn("statistics", commands)
         for call in bot.set_my_commands.await_args_list:
             self.assertEqual(call.args[0][0].command, "start")
         bot.set_chat_menu_button.assert_awaited_once()

@@ -141,6 +141,7 @@ class SecretaryBot:
             BotCommand(command="queue", description="Очередь публикаций"),
             BotCommand(command="registrations", description="Мероприятия и участники"),
             BotCommand(command="feedback", description="Отзывы пользователей"),
+            BotCommand(command="statistics", description="Статистика людей"),
             BotCommand(command="events", description="Мои мероприятия"),
             BotCommand(command="profile", description="Настройка профиля"),
             BotCommand(command="help", description="Помощь"),

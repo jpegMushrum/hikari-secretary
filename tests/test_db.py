@@ -446,6 +446,12 @@ class DatabaseTests(unittest.TestCase):
                 )
                 self.assertTrue(await db.register(user_id, post_id, None))
             self.assertTrue(await db.cancel_registration(3, post_id))
+            async with db.connect() as connection:
+                await connection.execute(
+                    "UPDATE registrations SET registered_at=? WHERE user_id=? AND post_id=?",
+                    ("2026-01-01T10:00:00+00:00", 11, post_id),
+                )
+                await connection.commit()
 
             first = await db.event_registrations_page(post_id, 0, page_size=5)
             third = await db.event_registrations_page(post_id, 2, page_size=5)
@@ -463,6 +469,18 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertIsNotNone(cancelled["registered_at"])
             self.assertIsNotNone(cancelled["cancelled_at"])
+
+            needs_pass_first = await db.event_registrations_page(
+                post_id, 0, page_size=11, sort_by="pass"
+            )
+            self.assertEqual(
+                [row["user_id"] for row in needs_pass_first.items],
+                [1, 5, 7, 11, 3, 9, 2, 4, 8, 10, 6],
+            )
+            by_registration_time = await db.event_registrations_page(
+                post_id, 0, page_size=11, sort_by="registered_at"
+            )
+            self.assertEqual(by_registration_time.items[0]["user_id"], 11)
 
     def test_feedback_lifecycle_preserves_event_and_manual_reviews(self):
         asyncio.run(self._feedback_lifecycle_preserves_event_and_manual_reviews())
@@ -515,6 +533,97 @@ class DatabaseTests(unittest.TestCase):
             self.assertTrue(await db.set_feedback_enabled(200, False))
             self.assertFalse(await db.feedback_enabled(200))
             self.assertTrue(await db.toggle_feedback_enabled(200))
+
+    def test_people_statistics_count_visits_and_all_feedback(self):
+        asyncio.run(self._people_statistics_count_visits_and_all_feedback())
+
+    async def _people_statistics_count_visits_and_all_feedback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = await migrated_database(Path(directory) / "test.sqlite3")
+            await db.save_profile(200, "Анна Петрова", "anna", "Анна", "Петрова")
+            await db.save_profile(201, "Борис Иванов", None, "Борис", "Иванов")
+            await db.save_profile(202, "Вера Сидорова", "vera", "Вера", "Сидорова")
+            await db.update_profile_answers(
+                200, is_russian_citizen=True, is_itmo_student=False
+            )
+            await db.update_profile_answers(
+                201, is_russian_citizen=False, is_itmo_student=True
+            )
+            await db.update_profile_answers(
+                202, is_russian_citizen=True, is_itmo_student=True
+            )
+
+            now = datetime.now(timezone.utc)
+            first_post = await db.create_post(100, "Первая встреча", [], [])
+            second_post = await db.create_post(100, "Вторая встреча", [], [])
+            await db.set_event(
+                first_post,
+                "Первая встреча",
+                now - timedelta(days=4),
+                now - timedelta(days=4, hours=-2),
+            )
+            await db.set_event(
+                second_post,
+                "Вторая встреча",
+                now - timedelta(days=1),
+                now - timedelta(days=1, hours=-2),
+            )
+            async with db.connect() as connection:
+                await connection.executemany(
+                    """INSERT INTO registrations(
+                           post_id,user_id,reminders_enabled,status,registered_at,
+                           attended,attendance_recorded_at
+                       ) VALUES(?,?,0,'registered',?,1,?)""",
+                    [
+                        (first_post, 200, now.isoformat(), now.isoformat()),
+                        (first_post, 201, now.isoformat(), now.isoformat()),
+                        (second_post, 201, now.isoformat(), now.isoformat()),
+                    ],
+                )
+                await connection.execute(
+                    """INSERT INTO registrations(
+                           post_id,user_id,reminders_enabled,status,registered_at,
+                           attended,attendance_recorded_at
+                       ) VALUES(?,?,0,'registered',?,0,?)""",
+                    (second_post, 202, now.isoformat(), now.isoformat()),
+                )
+                await connection.executemany(
+                    """INSERT INTO feedback_entries(user_id,post_id,text,created_at)
+                       VALUES(?,?,?,?)""",
+                    [
+                        (200, first_post, "Первый", now.isoformat()),
+                        (200, None, "Общий", now.isoformat()),
+                        (201, second_post, "Второй", now.isoformat()),
+                        (300, None, "Без профиля", now.isoformat()),
+                    ],
+                )
+                await connection.commit()
+
+            by_name = await db.people_statistics_page("name", 0)
+            self.assertEqual(
+                [person["full_name"] for person in by_name.items],
+                [
+                    "Анна Петрова",
+                    "Борис Иванов",
+                    "Вера Сидорова",
+                    "Пользователь #300",
+                ],
+            )
+            anna = by_name.items[0]
+            self.assertEqual(anna["visits"], 1)
+            self.assertEqual(anna["feedback_count"], 2)
+            self.assertIsNotNone(anna["last_visited_at"])
+
+            by_visits = await db.people_statistics_page("visits", 0)
+            self.assertEqual(
+                [person["user_id"] for person in by_visits.items], [201, 200, 202, 300]
+            )
+            by_last_visit = await db.people_statistics_page("last_visit", 0)
+            self.assertEqual(
+                [person["user_id"] for person in by_last_visit.items], [201, 200, 202, 300]
+            )
+            with self.assertRaises(ValueError):
+                await db.people_statistics_page("unknown", 0)
 
     def test_attendance_is_requested_only_for_active_registration(self):
         asyncio.run(self._attendance_is_requested_only_for_active_registration())

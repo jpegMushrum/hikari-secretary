@@ -8,10 +8,18 @@ from zoneinfo import ZoneInfo
 from app.access import AdminAccess
 from app.handlers.registrations import RegistrationHandlers
 from app.db import Page
-from app.keyboards import feedback_offer_keyboard, profile_keyboard
+from app.keyboards import (
+    admin_statistics_keyboard,
+    feedback_offer_keyboard,
+    participants_keyboard,
+    profile_keyboard,
+    user_menu_keyboard,
+)
 from app.presentation import (
-    feedbacks_list_text,
+    admin_events_rich_message,
+    feedbacks_rich_message,
     participant_status_label,
+    people_statistics_rich_message,
     participants_rich_message,
     reminder_offset_label,
     telegram_profile_label,
@@ -115,9 +123,55 @@ class AccessAndPresentationTests(unittest.TestCase):
         self.assertEqual(table.cells[0][0].text, "ФИО")
         self.assertEqual(table.cells[1][1].text, "Анна Петрова")
         self.assertEqual(table.cells[1][2].text, "отменён")
-        self.assertEqual(table.cells[1][3].text, "02.10.2026 13:00")
-        self.assertEqual(table.cells[1][4].text, "✅")
-        self.assertEqual(table.cells[1][5].text, "❌")
+        self.assertEqual(table.cells[1][3].text, "✅")
+        self.assertEqual(table.cells[1][4].text, "❌")
+        self.assertEqual(table.cells[1][5].text, "02.10.2026 13:00")
+        self.assertEqual(table.cells[0][5].text, "Время\nрег./отм.")
+
+        callbacks = {
+            button.callback_data
+            for row in participants_keyboard(7, 0, 2, "pass").inline_keyboard
+            for button in row
+        }
+        self.assertEqual(
+            {
+                "participants:7:name:0",
+                "participants:7:pass:0",
+                "participants:7:registered_at:0",
+                "participants:7:pass:1",
+                "noop",
+                "admin_registrations",
+            },
+            callbacks,
+        )
+
+    def test_admin_event_tables_show_active_and_past_events(self) -> None:
+        event = {
+            "post_id": 7,
+            "title": "Осенний вечер японского языка",
+            "text": "Описание мероприятия",
+            "starts_at": "2026-10-15T14:00:00+00:00",
+            "ends_at": "2026-10-15T16:00:00+00:00",
+            "registrations": 12,
+        }
+        active = admin_events_rich_message(
+            [event], False, 0, 1, ZoneInfo("Europe/Moscow")
+        )
+        past = admin_events_rich_message(
+            [event], True, 1, 3, ZoneInfo("Europe/Moscow")
+        )
+
+        table = active.blocks[1]
+        self.assertEqual(active.blocks[0].text, "Активные мероприятия")
+        self.assertEqual(table.type, "table")
+        self.assertEqual(table.cells[0][0].text, "#")
+        self.assertEqual(table.cells[1][0].text, "7")
+        self.assertEqual(table.cells[1][1].text, "Осенний вечер японского языка")
+        self.assertEqual(table.cells[1][2].text, "15.10.2026 17:00")
+        self.assertEqual(table.cells[1][3].text, "15.10.2026 19:00")
+        self.assertEqual(table.cells[1][4].text, "12")
+        self.assertEqual(past.blocks[0].text, "Прошедшие мероприятия")
+        self.assertEqual(past.blocks[1].caption, "Страница 2/3")
 
     def test_participant_statuses_are_human_readable(self) -> None:
         self.assertEqual(
@@ -156,12 +210,18 @@ class AccessAndPresentationTests(unittest.TestCase):
         self.assertEqual(
             profile_buttons["💬 Предлагать отзывы: ❌"], "feedback_toggle"
         )
+        self.assertNotIn("💬 Оставить обратную связь", profile_buttons)
+        user_buttons = {
+            button.text: button.callback_data
+            for row in user_menu_keyboard().inline_keyboard
+            for button in row
+        }
         self.assertEqual(
-            profile_buttons["💬 Оставить обратную связь"], "feedback_manual"
+            user_buttons["💬 Оставить обратную связь"], "feedback_manual"
         )
 
-    def test_feedback_list_shows_author_event_and_manual_marker(self) -> None:
-        text = feedbacks_list_text(
+    def test_feedback_table_shows_author_event_and_manual_marker(self) -> None:
+        message = feedbacks_rich_message(
             [
                 {
                     "id": 2,
@@ -195,9 +255,62 @@ class AccessAndPresentationTests(unittest.TestCase):
             ZoneInfo("Europe/Moscow"),
         )
 
-        self.assertIn("Анна Петрова (@anna)", text)
-        self.assertIn("Мероприятие #7: «Осенний вечер»", text)
-        self.assertIn("Общий отзыв (мероприятие не указано)", text)
+        table = message.blocks[1]
+        self.assertEqual(message.blocks[0].text, "Отзывы")
+        self.assertEqual(table.type, "table")
+        self.assertEqual(table.cells[0][0].text, "Автор")
+        self.assertEqual(table.cells[1][0].text, "Анна Петрова (@anna)")
+        self.assertEqual(table.cells[1][1].text, "Мероприятие #7: «Осенний вечер»")
+        self.assertEqual(table.cells[1][2].text, "15.10.2026 17:00")
+        self.assertEqual(table.cells[2][1].text, "Общий отзыв (мероприятие не указано)")
+
+    def test_people_statistics_uses_rich_message_table_and_sort_controls(self) -> None:
+        message = people_statistics_rich_message(
+            [{
+                "user_id": 200,
+                "full_name": "Анна Петрова",
+                "telegram_username": "anna",
+                "telegram_first_name": "Анна",
+                "telegram_last_name": "Петрова",
+                "is_russian_citizen": 1,
+                "is_itmo_student": 0,
+                "visits": 3,
+                "feedback_count": 2,
+                "last_visited_at": "2026-10-15T14:00:00+00:00",
+            }],
+            0,
+            1,
+            "visits",
+            ZoneInfo("Europe/Moscow"),
+        )
+
+        table = message.blocks[1]
+        self.assertEqual(message.blocks[0].text, "Статистика людей")
+        self.assertEqual(table.type, "table")
+        self.assertEqual(table.cells[0][4].text, "Посещ.")
+        self.assertEqual(table.cells[1][1].text, "@anna")
+        self.assertEqual(table.cells[1][2].text, "✅")
+        self.assertEqual(table.cells[1][3].text, "❌")
+        self.assertEqual(table.cells[1][4].text, "3")
+        self.assertEqual(table.cells[1][5].text, "2")
+        self.assertEqual(table.cells[1][6].text, "15.10.2026 17:00")
+
+        callbacks = {
+            button.callback_data
+            for row in admin_statistics_keyboard("visits", 0, 2).inline_keyboard
+            for button in row
+        }
+        self.assertEqual(
+            {
+                "admin_statistics:name:0",
+                "admin_statistics:visits:0",
+                "admin_statistics:last_visit:0",
+                "admin_statistics:visits:1",
+                "admin_home",
+                "noop",
+            },
+            callbacks,
+        )
 
     def test_participant_table_is_sent_only_after_admin_guard(self) -> None:
         context = SimpleNamespace(
@@ -228,12 +341,115 @@ class AccessAndPresentationTests(unittest.TestCase):
 
         asyncio.run(handlers.show_participants(callback))
 
-        context.db.event_registrations_page.assert_awaited_once_with(7, 0)
+        context.db.event_registrations_page.assert_awaited_once_with(7, 0, sort_by="name")
         context.bot.send_rich_message.assert_awaited_once()
         self.assertEqual(
             context.bot.send_rich_message.await_args.args[1].blocks[1].type,
             "table",
         )
+        callback.answer.assert_awaited_once()
+
+    def test_admin_events_are_sent_as_rich_table(self) -> None:
+        event = {
+            "post_id": 7,
+            "title": "Осенний вечер японского языка",
+            "text": "Описание мероприятия",
+            "starts_at": "2026-10-15T14:00:00+00:00",
+            "ends_at": "2026-10-15T16:00:00+00:00",
+            "registrations": 12,
+        }
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(admin_events=AsyncMock(return_value=[event])),
+            bot=SimpleNamespace(send_rich_message=AsyncMock()),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            message=SimpleNamespace(chat=SimpleNamespace(id=1)),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.admin_registrations_button(callback))
+
+        context.db.admin_events.assert_awaited_once_with()
+        context.bot.send_rich_message.assert_awaited_once()
+        rich_message = context.bot.send_rich_message.await_args.args[1]
+        self.assertEqual(rich_message.blocks[1].type, "table")
+        self.assertEqual(
+            rich_message.blocks[0].text, "Активные мероприятия"
+        )
+        callback.answer.assert_awaited_once()
+
+    def test_past_event_page_replaces_previous_rich_table(self) -> None:
+        event = {
+            "post_id": 7,
+            "title": "Осенний вечер японского языка",
+            "text": "Описание мероприятия",
+            "starts_at": "2026-10-15T14:00:00+00:00",
+            "ends_at": "2026-10-15T16:00:00+00:00",
+            "registrations": 12,
+        }
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(
+                admin_events_page=AsyncMock(return_value=Page([event], 1, 5, 6)),
+            ),
+            bot=SimpleNamespace(
+                send_rich_message=AsyncMock(), delete_message=AsyncMock(),
+            ),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            data="admin_events_page:past:1",
+            message=SimpleNamespace(chat=SimpleNamespace(id=1), message_id=24),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.paginate_admin_events(callback))
+
+        context.db.admin_events_page.assert_awaited_once_with(True, 1)
+        context.bot.send_rich_message.assert_awaited_once()
+        context.bot.delete_message.assert_awaited_once_with(1, 24)
+        callback.answer.assert_awaited_once()
+
+    def test_participant_sort_replaces_previous_rich_table(self) -> None:
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(event_registrations_page=AsyncMock(return_value=Page([{
+                "full_name": "Анна Петрова",
+                "title": "Осенний вечер японского языка",
+                "text": "Описание мероприятия",
+                "telegram_username": "anna",
+                "telegram_first_name": "Анна",
+                "telegram_last_name": "Петрова",
+                "status": "registered",
+                "attended": None,
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+                "cancelled_at": None,
+                "is_russian_citizen": 0,
+                "is_itmo_student": 1,
+            }], 0, 10, 1))),
+            bot=SimpleNamespace(
+                send_rich_message=AsyncMock(), delete_message=AsyncMock(),
+            ),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            data="participants:7:pass:0",
+            message=SimpleNamespace(
+                chat=SimpleNamespace(id=1), message_id=22, answer=AsyncMock(),
+            ),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.show_participants(callback))
+
+        context.db.event_registrations_page.assert_awaited_once_with(7, 0, sort_by="pass")
+        context.bot.send_rich_message.assert_awaited_once()
+        context.bot.delete_message.assert_awaited_once_with(1, 22)
         callback.answer.assert_awaited_once()
 
     def test_attendance_confirmation_offers_feedback_only_after_visit(self) -> None:
@@ -260,6 +476,99 @@ class AccessAndPresentationTests(unittest.TestCase):
         self.assertEqual(
             callback.message.answer.await_args.args[0],
             "Хотите оставить обратную связь?",
+        )
+        callback.answer.assert_awaited_once()
+
+    def test_statistics_table_is_sent_only_after_admin_guard(self) -> None:
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(people_statistics_page=AsyncMock(return_value=Page([{
+                "user_id": 200,
+                "full_name": "Анна Петрова",
+                "telegram_username": "anna",
+                "telegram_first_name": "Анна",
+                "telegram_last_name": "Петрова",
+                "is_russian_citizen": 1,
+                "is_itmo_student": 0,
+                "visits": 3,
+                "feedback_count": 2,
+                "last_visited_at": None,
+            }], 0, 10, 1))),
+            bot=SimpleNamespace(send_rich_message=AsyncMock()),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            data="admin_statistics",
+            message=SimpleNamespace(chat=SimpleNamespace(id=1, type="private")),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.show_admin_statistics(callback))
+
+        context.db.people_statistics_page.assert_awaited_once_with("name", 0)
+        context.bot.send_rich_message.assert_awaited_once()
+        self.assertEqual(
+            context.bot.send_rich_message.await_args.args[1].blocks[1].type,
+            "table",
+        )
+        callback.answer.assert_awaited_once()
+
+    def test_statistics_sort_replaces_previous_rich_table(self) -> None:
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(people_statistics_page=AsyncMock(return_value=Page([], 0, 10, 0))),
+            bot=SimpleNamespace(
+                send_rich_message=AsyncMock(), delete_message=AsyncMock(),
+            ),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            data="admin_statistics:visits:0",
+            message=SimpleNamespace(chat=SimpleNamespace(id=1), message_id=23),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.paginate_admin_statistics(callback))
+
+        context.db.people_statistics_page.assert_awaited_once_with("visits", 0)
+        context.bot.send_rich_message.assert_awaited_once()
+        context.bot.delete_message.assert_awaited_once_with(1, 23)
+        callback.answer.assert_awaited_once()
+
+    def test_feedback_table_is_sent_only_after_admin_guard(self) -> None:
+        context = SimpleNamespace(
+            settings=SimpleNamespace(timezone=ZoneInfo("Europe/Moscow")),
+            db=SimpleNamespace(feedback_entries_page=AsyncMock(return_value=Page([{
+                "id": 4,
+                "user_id": 200,
+                "post_id": None,
+                "title": None,
+                "post_text": None,
+                "full_name": "Анна Петрова",
+                "telegram_username": "anna",
+                "telegram_first_name": "Анна",
+                "telegram_last_name": "Петрова",
+                "created_at": "2026-10-15T14:00:00+00:00",
+                "feedback_text": "Очень понравилось!",
+            }], 0, 5, 1))),
+            bot=SimpleNamespace(send_rich_message=AsyncMock()),
+        )
+        access = SimpleNamespace(guard_callback=AsyncMock(return_value=True))
+        handlers = RegistrationHandlers(context, access)
+        callback = SimpleNamespace(
+            message=SimpleNamespace(chat=SimpleNamespace(id=1, type="private")),
+            answer=AsyncMock(),
+        )
+
+        asyncio.run(handlers.show_admin_feedback(callback))
+
+        context.db.feedback_entries_page.assert_awaited_once_with(0)
+        context.bot.send_rich_message.assert_awaited_once()
+        self.assertEqual(
+            context.bot.send_rich_message.await_args.args[1].blocks[1].type,
+            "table",
         )
         callback.answer.assert_awaited_once()
 
@@ -302,4 +611,4 @@ class AccessAndPresentationTests(unittest.TestCase):
 
         self.assertTrue(handled)
         db.save_feedback_from_flow.assert_awaited_once_with(200, "Общий отзыв")
-        self.assertIn("без привязки", message.answer.await_args.args[0])
+        self.assertEqual(message.answer.await_args.args[0], "Спасибо за отзыв!")

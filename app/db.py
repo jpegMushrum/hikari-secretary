@@ -11,6 +11,8 @@ import aiosqlite
 REQUIRED_SCHEMA_VERSION = 6
 MAX_PENDING_POSTS = 5
 MAX_ACTIVE_EVENTS = 5
+PERSON_STATISTICS_SORTS = frozenset({"name", "visits", "last_visit"})
+EVENT_REGISTRATION_SORTS = frozenset({"name", "pass", "registered_at"})
 
 
 class CapacityLimitReached(RuntimeError):
@@ -592,6 +594,57 @@ class Database:
             )).fetchone()
             return dict(row) if row else None
 
+    async def people_statistics_page(
+        self, sort_by: str, page: int, page_size: int = 10
+    ) -> Page:
+        if sort_by not in PERSON_STATISTICS_SORTS:
+            raise ValueError(f"Неизвестная сортировка статистики: {sort_by}")
+        page = max(0, page)
+        order_by = {
+            "name": "full_name COLLATE NOCASE ASC,people.user_id ASC",
+            "visits": (
+                "visits DESC,last_visited_at IS NULL ASC,last_visited_at DESC,"
+                "full_name COLLATE NOCASE ASC,people.user_id ASC"
+            ),
+            "last_visit": (
+                "last_visited_at IS NULL ASC,last_visited_at DESC,visits DESC,"
+                "full_name COLLATE NOCASE ASC,people.user_id ASC"
+            ),
+        }[sort_by]
+        async with self.connect() as db:
+            total = int((await (await db.execute(
+                """SELECT COUNT(*) AS n FROM (
+                       SELECT user_id FROM user_profiles
+                       UNION SELECT user_id FROM feedback_entries
+                   )"""
+            )).fetchone())["n"])
+            pages = max(1, (total + page_size - 1) // page_size)
+            page = min(page, pages - 1)
+            rows = await (await db.execute(
+                f"""SELECT people.user_id,
+                           COALESCE(NULLIF(TRIM(u.full_name), ''),
+                                    'Пользователь #' || people.user_id) AS full_name,
+                           u.telegram_username,
+                           u.telegram_first_name,u.telegram_last_name,
+                           u.is_russian_citizen,u.is_itmo_student,
+                           (SELECT COUNT(*) FROM registrations r
+                            WHERE r.user_id=people.user_id AND r.attended=1) AS visits,
+                           (SELECT MAX(e.starts_at) FROM registrations r
+                            JOIN events e ON e.post_id=r.post_id
+                            WHERE r.user_id=people.user_id AND r.attended=1) AS last_visited_at,
+                           (SELECT COUNT(*) FROM feedback_entries f
+                            WHERE f.user_id=people.user_id) AS feedback_count
+                    FROM (
+                        SELECT user_id FROM user_profiles
+                        UNION SELECT user_id FROM feedback_entries
+                    ) people
+                    LEFT JOIN user_profiles u ON u.user_id=people.user_id
+                    ORDER BY {order_by}
+                    LIMIT ? OFFSET ?""",
+                (page_size, page * page_size),
+            )).fetchall()
+            return Page([dict(row) for row in rows], page, page_size, total)
+
     async def save_profile(
         self,
         user_id: int,
@@ -998,9 +1051,24 @@ class Database:
             return [dict(row) for row in rows]
 
     async def event_registrations_page(
-        self, post_id: int, page: int, page_size: int = 10
+        self, post_id: int, page: int, page_size: int = 10, sort_by: str = "name"
     ) -> Page:
         page = max(0, page)
+        order_by = {
+            "name": "u.full_name COLLATE NOCASE, r.user_id",
+            "pass": """CASE
+                           WHEN COALESCE(u.is_russian_citizen, 0)=1
+                            AND COALESCE(u.is_itmo_student, 0)=1 THEN 1
+                           ELSE 0
+                         END,
+                         COALESCE(u.is_russian_citizen, 0),
+                         COALESCE(u.is_itmo_student, 0),
+                         u.full_name COLLATE NOCASE,
+                         r.user_id""",
+            "registered_at": "datetime(r.registered_at), r.user_id",
+        }.get(sort_by)
+        if order_by is None:
+            raise ValueError(f"Unknown participant sort: {sort_by}")
         async with self.connect() as db:
             total = int((await (await db.execute(
                 "SELECT COUNT(*) AS n FROM registrations WHERE post_id=?",
@@ -1019,8 +1087,8 @@ class Database:
                    JOIN posts p ON p.id=r.post_id
                    JOIN user_profiles u ON u.user_id=r.user_id
                    WHERE r.post_id=?
-                   ORDER BY u.full_name COLLATE NOCASE,r.user_id
-                   LIMIT ? OFFSET ?""",
+                   ORDER BY {order_by}
+                   LIMIT ? OFFSET ?""".format(order_by=order_by),
                 (post_id, page_size, page * page_size),
             )).fetchall()
             return Page([dict(row) for row in rows], page, page_size, total)

@@ -11,6 +11,18 @@ from .formatting import format_local
 
 log = logging.getLogger(__name__)
 
+PERSON_STATISTICS_SORT_LABELS = {
+    "name": "ФИО",
+    "visits": "посещениям",
+    "last_visit": "последнему посещению",
+}
+
+PARTICIPANT_SORT_LABELS = {
+    "name": "ФИО",
+    "pass": "необходимости пропуска",
+    "registered_at": "времени регистрации",
+}
+
 
 def post_title(text: str) -> str:
     clean = " ".join(text.strip().split())
@@ -90,14 +102,15 @@ def participants_rich_message(
     page: int,
     pages: int,
     local_tz: ZoneInfo,
+    sort_by: str = "name",
 ) -> InputRichMessage:
     cells = [[
         _table_cell("ФИО", header=True),
         _table_cell("Telegram", header=True),
         _table_cell("Статус", header=True),
-        _table_cell("Время\nрег./отм.", header=True),
         _table_cell("РФ", header=True),
         _table_cell("ИТМО", header=True),
+        _table_cell("Время\nрег./отм.", header=True),
     ]]
     for participant in participants:
         timestamp = (
@@ -109,9 +122,9 @@ def participants_rich_message(
             _table_cell(_short_table_value(participant["full_name"], 32)),
             _table_cell(_short_table_value(telegram_profile_label(participant), 24)),
             _table_cell(participant_status_label(participant)),
-            _table_cell(format_local(timestamp, local_tz) if timestamp else "—"),
             _table_cell(_yes_no_table_value(participant["is_russian_citizen"])),
             _table_cell(_yes_no_table_value(participant["is_itmo_student"])),
+            _table_cell(format_local(timestamp, local_tz) if timestamp else "—"),
         ])
     return InputRichMessage.model_validate({
         "blocks": [
@@ -122,7 +135,47 @@ def participants_rich_message(
             },
             {
                 "type": "table",
-                "caption": f"Страница {page + 1}/{pages}",
+                "caption": (
+                    f"Страница {page + 1}/{pages} · сортировка по "
+                    f"{PARTICIPANT_SORT_LABELS[sort_by]}"
+                ),
+                "cells": cells,
+                "is_bordered": True,
+                "is_striped": True,
+                "is_compact": True,
+            },
+        ]
+    })
+
+
+def admin_events_rich_message(
+    events: list[dict], past: bool, page: int, pages: int, local_tz: ZoneInfo
+) -> InputRichMessage:
+    heading = "Прошедшие мероприятия" if past else "Активные мероприятия"
+    cells = [[
+        _table_cell("#", header=True),
+        _table_cell("Название", header=True),
+        _table_cell("Начало", header=True),
+        _table_cell("Конец", header=True),
+        _table_cell("Участн.", header=True),
+    ]]
+    for event in events:
+        cells.append([
+            _table_cell(str(event["post_id"])),
+            _table_cell(_short_table_value(event_title(event), 48)),
+            _table_cell(format_local(event["starts_at"], local_tz)),
+            _table_cell(format_local(event["ends_at"], local_tz)),
+            _table_cell(str(event["registrations"])),
+        ])
+    caption = f"Страница {page + 1}/{pages}"
+    if not events:
+        caption += " · список пуст"
+    return InputRichMessage.model_validate({
+        "blocks": [
+            {"type": "heading", "text": heading, "size": 2},
+            {
+                "type": "table",
+                "caption": caption,
                 "cells": cells,
                 "is_bordered": True,
                 "is_striped": True,
@@ -151,23 +204,38 @@ def feedback_event_label(feedback: dict) -> str:
     )
 
 
-def _short_feedback_text(text: str, limit: int = 500) -> str:
-    clean = text.strip()
-    return f"{clean[:limit - 1]}…" if len(clean) > limit else clean
-
-
-def feedbacks_list_text(feedback_entries: list[dict], page: int, pages: int, local_tz: ZoneInfo) -> str:
-    lines = [f"💬 Отзывы · страница {page + 1}/{pages}"]
+def feedbacks_rich_message(
+    feedback_entries: list[dict], page: int, pages: int, local_tz: ZoneInfo
+) -> InputRichMessage:
+    cells = [[
+        _table_cell("Автор", header=True),
+        _table_cell("Мероприятие", header=True),
+        _table_cell("Время", header=True),
+        _table_cell("Отзыв", header=True),
+    ]]
+    for feedback in feedback_entries:
+        cells.append([
+            _table_cell(_short_table_value(feedback_author_label(feedback), 40)),
+            _table_cell(_short_table_value(feedback_event_label(feedback), 56)),
+            _table_cell(format_local(feedback["created_at"], local_tz)),
+            _table_cell(_short_table_value(feedback["feedback_text"], 300)),
+        ])
+    caption = f"Страница {page + 1}/{pages}"
     if not feedback_entries:
-        return "\n".join([*lines, "", "Отзывов пока нет."])
-    for index, feedback in enumerate(feedback_entries, 1):
-        lines.extend((
-            f"\n{index}. {_short_feedback_text(feedback_author_label(feedback), 80)}",
-            f"   {format_local(feedback['created_at'], local_tz)}",
-            f"   {_short_feedback_text(feedback_event_label(feedback), 140)}",
-            _short_feedback_text(feedback["feedback_text"], 350),
-        ))
-    return "\n".join(lines)
+        caption += " · отзывов пока нет"
+    return InputRichMessage.model_validate({
+        "blocks": [
+            {"type": "heading", "text": "Отзывы", "size": 2},
+            {
+                "type": "table",
+                "caption": caption,
+                "cells": cells,
+                "is_bordered": True,
+                "is_striped": True,
+                "is_compact": True,
+            },
+        ]
+    })
 
 
 def feedback_detail_text(feedback: dict, local_tz: ZoneInfo) -> str:
@@ -180,6 +248,53 @@ def feedback_detail_text(feedback: dict, local_tz: ZoneInfo) -> str:
         "",
         feedback["feedback_text"],
     ))
+
+
+def people_statistics_rich_message(
+    people: list[dict],
+    page: int,
+    pages: int,
+    sort_by: str,
+    local_tz: ZoneInfo,
+) -> InputRichMessage:
+    cells = [[
+        _table_cell("ФИО", header=True),
+        _table_cell("Telegram", header=True),
+        _table_cell("РФ", header=True),
+        _table_cell("ИТМО", header=True),
+        _table_cell("Посещ.", header=True),
+        _table_cell("Отзывы", header=True),
+        _table_cell("Последнее\nпосещение", header=True),
+    ]]
+    for person in people:
+        cells.append([
+            _table_cell(_short_table_value(person["full_name"], 28)),
+            _table_cell(_short_table_value(telegram_profile_label(person), 20)),
+            _table_cell(_yes_no_table_value(person["is_russian_citizen"])),
+            _table_cell(_yes_no_table_value(person["is_itmo_student"])),
+            _table_cell(str(person["visits"])),
+            _table_cell(str(person["feedback_count"])),
+            _table_cell(
+                format_local(person["last_visited_at"], local_tz)
+                if person["last_visited_at"] else "—"
+            ),
+        ])
+    return InputRichMessage.model_validate({
+        "blocks": [
+            {"type": "heading", "text": "Статистика людей", "size": 2},
+            {
+                "type": "table",
+                "caption": (
+                    f"Страница {page + 1}/{pages} · сортировка по "
+                    f"{PERSON_STATISTICS_SORT_LABELS[sort_by]}"
+                ),
+                "cells": cells,
+                "is_bordered": True,
+                "is_striped": True,
+                "is_compact": True,
+            },
+        ]
+    })
 
 
 def remove_media(paths: list[str]) -> None:
