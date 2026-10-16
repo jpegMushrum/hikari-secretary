@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import logging
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -239,14 +240,22 @@ def feedbacks_rich_message(
 
 
 def feedback_detail_text(feedback: dict, local_tz: ZoneInfo) -> str:
+    if feedback.get("post_id") is None:
+        event = "<b>Мероприятие:</b> не указано"
+    else:
+        title = event_title({
+            "title": feedback.get("title"),
+            "text": feedback.get("post_text"),
+        })
+        event = f"<b>Мероприятие #{feedback['post_id']}:</b> «{escape(title)}»"
     return "\n".join((
-        f"💬 Отзыв #{feedback['id']}",
+        f"<b>💬 Отзыв #{feedback['id']}</b>",
         "",
-        f"Автор: {feedback_author_label(feedback)}",
-        f"Время: {format_local(feedback['created_at'], local_tz)}",
-        feedback_event_label(feedback),
+        f"<b>Автор:</b> {escape(feedback_author_label(feedback))}",
+        f"<b>Время:</b> {format_local(feedback['created_at'], local_tz)}",
+        event,
         "",
-        feedback["feedback_text"],
+        f"<i>{escape(feedback['feedback_text'])}</i>",
     ))
 
 

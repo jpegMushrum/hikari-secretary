@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
+from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message, User
 
@@ -318,6 +319,7 @@ class RegistrationHandlers:
             return
         await callback.message.answer(
             feedback_detail_text(feedback, self.context.settings.timezone),
+            parse_mode=ParseMode.HTML,
             reply_markup=admin_feedback_detail_keyboard(
                 int(feedback_raw), int(page_raw)
             ),

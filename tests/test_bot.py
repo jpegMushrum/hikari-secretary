@@ -18,6 +18,7 @@ from app.keyboards import (
 from app.presentation import (
     admin_events_rich_message,
     feedbacks_rich_message,
+    feedback_detail_text,
     participant_status_label,
     people_statistics_rich_message,
     participants_rich_message,
@@ -263,6 +264,33 @@ class AccessAndPresentationTests(unittest.TestCase):
         self.assertEqual(table.cells[1][1].text, "Мероприятие #7: «Осенний вечер»")
         self.assertEqual(table.cells[1][2].text, "15.10.2026 17:00")
         self.assertEqual(table.cells[2][1].text, "Общий отзыв (мероприятие не указано)")
+
+    def test_feedback_detail_is_safely_html_formatted(self) -> None:
+        text = feedback_detail_text(
+            {
+                "id": 2,
+                "user_id": 200,
+                "post_id": 5,
+                "title": "test <3",
+                "post_text": "Описание",
+                "full_name": "Тестик",
+                "telegram_username": "NonStopDol",
+                "telegram_first_name": "Тестик",
+                "telegram_last_name": None,
+                "created_at": "2026-10-16T09:56:00+00:00",
+                "feedback_text": "Тест <тест>&",
+            },
+            ZoneInfo("Europe/Moscow"),
+        )
+
+        self.assertEqual(
+            text,
+            "<b>💬 Отзыв #2</b>\n\n"
+            "<b>Автор:</b> Тестик (@NonStopDol)\n"
+            "<b>Время:</b> 16.10.2026 12:56\n"
+            "<b>Мероприятие #5:</b> «test &lt;3»\n\n"
+            "<i>Тест &lt;тест&gt;&amp;</i>",
+        )
 
     def test_people_statistics_uses_rich_message_table_and_sort_controls(self) -> None:
         message = people_statistics_rich_message(
