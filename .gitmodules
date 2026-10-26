@@ -1,6 +1,6 @@
 [submodule "bot"]
 	path = bot
-	url = git@github.com:YOUR_ORG/hikari-secretary-bot.git
+	url = git@github.com:jpegMushrum/hikari-secretary-bot.git
 [submodule "backend"]
 	path = backend
 	url = git@github.com:jpegMushrum/hikari-secretary-backend.git
