@@ -1,21 +1,31 @@
-services:
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.migrate
-    env_file: .env
-    volumes:
-      - ./data:/app/data
-    restart: "no"
+name: hikari-secretary
 
+# Integration Compose for the complete Hikari Secretary platform.
+#
+# The source repositories are intentionally not connected yet. After the owner
+# adds the three submodules, this file will compose them from ./bot, ./backend
+# and ./miniapp. Until then it contains no runnable application service.
+
+x-hikari-components:
+  postgres:
+    description: Shared PostgreSQL database owned by the backend.
+  backend:
+    path: ./backend
+    description: Go API, database migrations and outbox scheduler.
   bot:
-    build: .
-    restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    env_file: .env
-    volumes:
-      - ./data:/app/data
-      - ./targets.json:/app/targets.json:ro
+    path: ./bot
+    description: Python Telegram adapter for participants and delivery.
+  miniapp:
+    path: ./miniapp
+    description: Telegram Mini App for administrators.
 
+services:
+  placeholder:
+    image: alpine:3.21
+    profiles: [placeholder]
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        echo 'The Hikari Secretary submodules are not connected yet. See
+        docs/repository-layout.md.'

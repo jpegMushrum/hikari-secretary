@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 targets.json
+bot/.env
+bot/data/
+bot/targets.json
