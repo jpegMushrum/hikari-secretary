@@ -11,16 +11,14 @@
 
 ## Статус перехода
 
-Рабочий код Telegram-бота **v0.9.0** уже расположен в [`bot/`](bot/README.md).
-Пока это обычный каталог в корневом репозитории: его предстоит выделить в
-репозиторий `hikari-secretary-bot` и заменить Git-сабмодулем. Каталоги
-`backend/` и `miniapp/` намеренно ещё не созданы — их добавит владелец после
-создания соответствующих репозиториев.
+Все три компонента уже подключены как Git-сабмодули. Рабочий Telegram-бот
+**v0.9.0** находится в [`bot/`](bot/README.md); backend перешёл в первый
+технический релиз `v0.1.0-dev`; Mini App пока содержит стартовую документацию.
 
 | Компонент | Будущий репозиторий | Состояние |
 | --- | --- | --- |
-| `bot/` | `hikari-secretary-bot` | Исходный код v0.9.0 подготовлен к выделению |
-| `backend/` | `hikari-secretary-backend` | Будущий Go API и владелец PostgreSQL |
+| `bot/` | `hikari-secretary-bot` | Стабильный участнический интерфейс v0.9.0 |
+| `backend/` | `hikari-secretary-backend` | Go foundation v0.1.0-dev: PostgreSQL, миграции и healthcheck |
 | `miniapp/` | `hikari-secretary-miniapp` | Будущий интерфейс администраторов |
 
 Корневой [`docker-compose.yml`](docker-compose.yml) — валидная интеграционная
@@ -37,6 +35,7 @@
 
 - [Структура репозитория и план перехода](docs/repository-layout.md)
 - [Документация текущего бота v0.9.0](bot/docs/README.md)
+- [Документация backend v0.1.0-dev](backend/README.md)
 - [История изменений бота](bot/CHANGELOG.md)
 
 ## Безопасность данных
