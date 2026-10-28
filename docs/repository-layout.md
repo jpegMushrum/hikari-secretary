@@ -16,7 +16,8 @@ hikari-secretary/
 ```
 
 Все три каталога уже подключены как Git-сабмодули. `bot/` содержит стабильную
-версию Python-бота, `backend/` — фундамент Go-сервиса `v0.1.0-dev`, а
+версию Python-бота, `backend/` — фундамент Go-сервиса `v0.2.0-dev` с
+проверкой Telegram-доступа, а
 `miniapp/` готов к разработке административного интерфейса. Обновление каждого
 компонента фиксируется в корне отдельным gitlink-коммитом.
 
@@ -24,8 +25,8 @@ hikari-secretary/
 
 | Компонент | Репозиторий | Ответственность |
 | --- | --- | --- |
-| `bot/` | `hikari-secretary-bot` | Python/aiogram, пользовательские Telegram-сценарии, отправка сообщений и доставка задач |
-| `backend/` | `hikari-secretary-backend` | Go API, PostgreSQL, миграции, бизнес-правила, outbox и авторизация Mini App |
+| `bot/` | `hikari-secretary-bot` | Python/aiogram-адаптер Telegram, временный пользовательский UI и delivery worker |
+| `backend/` | `hikari-secretary-backend` | Go API, PostgreSQL, миграции, бизнес-правила, outbox и авторизация Mini App / bot adapter |
 | `miniapp/` | `hikari-secretary-miniapp` | Интерфейс администраторов внутри Telegram |
 
 После миграции Go-бэкенд станет единственным владельцем PostgreSQL. Бот и Mini
@@ -70,9 +71,16 @@ docker compose --profile placeholder up
    их сабмодулями в пути `bot/`, `backend/` и `miniapp/`.
 2. ✅ Создать backend foundation: PostgreSQL, миграции, healthcheck и Docker
    Compose для автономной разработки.
-3. Зафиксировать модель данных, авторизацию Telegram Mini App и первый
-   вертикальный API-срез для мероприятий и участников.
-4. Реализовать административный Mini App поверх утверждённого API.
-5. Заменить заглушку корневого Compose полноценным интеграционным стеком.
-6. Добавить CI/CD: проверки сервисов в их репозиториях и интеграционный deploy из
+3. ✅ Добавить проверку Telegram Mini App `initData` и временный allowlist
+   администраторов для всех административных API.
+4. ✅ Зафиксировать целевую архитектуру, каталог use cases и модель первого
+   доменного среза.
+5. Реализовать закрытый Bot API, модель `People + Events + Registrations +
+   Attendance + Feedback`, миграции PostgreSQL и проверяемый importer SQLite.
+6. Переключить bot на backend для первого среза после резервной копии и сверки.
+7. Реализовать административный Mini App поверх утверждённого API.
+8. Перенести Publishing, а затем Learning Content; доставка остаётся только в
+   Telegram.
+9. Заменить заглушку корневого Compose полноценным интеграционным стеком.
+10. Добавить CI/CD: проверки сервисов в их репозиториях и интеграционный deploy из
    корня.
