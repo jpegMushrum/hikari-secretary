@@ -13,13 +13,14 @@
 
 Все три компонента уже подключены как Git-сабмодули. Рабочий Telegram-бот
 **v0.9.0** находится в [`bot/`](bot/README.md); backend перешёл в технический
-релиз `v0.2.0-dev` с защищённым контуром Telegram-доступа; Mini App пока
+релиз `v0.3.0-dev` с защищённым контуром Telegram-доступа и первым срезом
+людей; Mini App пока
 содержит стартовую документацию.
 
 | Компонент | Будущий репозиторий | Состояние |
 | --- | --- | --- |
 | `bot/` | `hikari-secretary-bot` | Стабильный участнический интерфейс v0.9.0 |
-| `backend/` | `hikari-secretary-backend` | Go foundation v0.2.0-dev: PostgreSQL, миграции, healthcheck и Telegram-доступ |
+| `backend/` | `hikari-secretary-backend` | Go v0.3.0-dev: PostgreSQL, миграции, Telegram-доступ и первый People API |
 | `miniapp/` | `hikari-secretary-miniapp` | Будущий интерфейс администраторов |
 
 Корневой [`docker-compose.yml`](docker-compose.yml) — валидная интеграционная
@@ -39,7 +40,7 @@
 - [Каталог use cases](docs/use-cases.md)
 - [Модель данных и план переноса](docs/domain-model.md)
 - [Документация текущего бота v0.9.0](bot/docs/README.md)
-- [Документация backend v0.2.0-dev](backend/README.md)
+- [Документация backend v0.3.0-dev](backend/README.md)
 - [История изменений бота](bot/CHANGELOG.md)
 
 ## Безопасность данных
