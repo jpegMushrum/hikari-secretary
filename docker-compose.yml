@@ -1,31 +1,95 @@
 name: hikari-secretary
 
-# Integration Compose for the complete Hikari Secretary platform.
-#
-# The source repositories are intentionally not connected yet. After the owner
-# adds the three submodules, this file will compose them from ./bot, ./backend
-# and ./miniapp. Until then it contains no runnable application service.
-
-x-hikari-components:
-  postgres:
-    description: Shared PostgreSQL database owned by the backend.
-  backend:
-    path: ./backend
-    description: Go API, database migrations and outbox scheduler.
-  bot:
-    path: ./bot
-    description: Python Telegram adapter for participants and delivery.
-  miniapp:
-    path: ./miniapp
-    description: Telegram Mini App for administrators.
-
 services:
-  placeholder:
-    image: alpine:3.21
-    profiles: [placeholder]
+  database:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend-migrate:
+    image: hikari-secretary-backend:local
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    entrypoint: ["/app/migrate"]
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+
+  bot-migrate:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile.migrate
+    env_file:
+      - ${BOT_ENV_FILE:-./.env}
+    volumes:
+      - ${BOT_DATA_DIR:-./data}:/app/data
+    restart: "no"
+
+  backend-import:
+    image: hikari-secretary-backend:local
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    entrypoint: ["/bin/sh", "-ec"]
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        echo 'The Hikari Secretary submodules are not connected yet. See
-        docs/repository-layout.md.'
+      - 'exec /app/import-legacy --sqlite /legacy/bot.sqlite3 --apply --json --database-url "$$DATABASE_URL"'
+    volumes:
+      - ${BOT_DATA_DIR:-./data}:/legacy:ro
+    depends_on:
+      database:
+        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
+      bot-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  backend:
+    image: hikari-secretary-backend:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    depends_on:
+      database:
+        condition: service_healthy
+      backend-import:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    env_file:
+      - ${BOT_ENV_FILE:-./.env}
+    environment:
+      BACKEND_URL: http://backend:8080
+    volumes:
+      - ${BOT_DATA_DIR:-./data}:/app/data
+      - ${BOT_TARGETS_FILE:-./targets.json}:/app/targets.json:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      bot-migrate:
+        condition: service_completed_successfully
+      backend-import:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

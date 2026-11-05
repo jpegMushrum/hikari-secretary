@@ -1,0 +1,15 @@
+{
+  "telegram": [
+    {
+      "key": "main_channel",
+      "name": "Основной Telegram-канал",
+      "chat_id": "@channel_username"
+    },
+    {
+      "key": "main_chat",
+      "name": "Топик основного Telegram-чата",
+      "chat_id": -1001234567890,
+      "message_thread_id": 42
+    }
+  ]
+}

@@ -13,25 +13,41 @@
 
 Все три компонента уже подключены как Git-сабмодули. Рабочий Telegram-бот
 **v0.9.0** находится в [`bot/`](bot/README.md); backend перешёл в технический
-релиз `v0.3.0-dev` с защищённым контуром Telegram-доступа и первым срезом
-людей; Mini App пока
+релиз `v0.3.0-dev` с первым рабочим Bot API и импортом первого доменного среза;
+Mini App пока
 содержит стартовую документацию.
 
 | Компонент | Будущий репозиторий | Состояние |
 | --- | --- | --- |
 | `bot/` | `hikari-secretary-bot` | Стабильный участнический интерфейс v0.9.0 |
-| `backend/` | `hikari-secretary-backend` | Go v0.3.0-dev: PostgreSQL, миграции, Telegram-доступ и первый People API |
+| `backend/` | `hikari-secretary-backend` | Go v0.3.0-dev: PostgreSQL, Bot API, миграции и первый доменный срез |
 | `miniapp/` | `hikari-secretary-miniapp` | Будущий интерфейс администраторов |
 
-Корневой [`docker-compose.yml`](docker-compose.yml) — валидная интеграционная
-заглушка. Он **не запускает приложение и не предназначен для deploy**, пока не
-будут подключены все три сабмодуля. Для текущего бота используйте инструкции в
-[`bot/README.md`](bot/README.md).
+Корневой [`docker-compose.yml`](docker-compose.yml) собирает backend и bot в
+правильной последовательности: PostgreSQL → миграции → импорт SQLite →
+backend → bot. Mini App пока не входит в стек и будет добавлен после его
+реализации.
 
-До выделения бота в отдельный репозиторий его рабочие `.env`, `targets.json` и
-`data/` остаются в корне. Поэтому текущий запуск выполняется из корня командой
-`docker compose -f bot/docker-compose.yml up -d --build`; Compose передаёт эти
-пути в `bot/` через настраиваемые переменные.
+Рабочие `.env`, `targets.json` и `data/` остаются в корне интеграционного
+репозитория. Основной запуск выполняется корневым Compose; отдельный
+`bot/docker-compose.yml` остаётся доступен для автономной разработки bot.
+
+Примеры конфигурации разделены по сервисам: [.env.example](.env.example) для
+текущего корневого запуска бота, [backend/.env.example](backend/.env.example)
+для Go backend и [bot/.env.example](bot/.env.example) для самостоятельного
+запуска bot. Рабочие `.env` не коммитятся.
+
+Для интеграционного запуска скопируйте примеры, заполните секреты и создайте
+рабочий файл целей публикации:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item backend/.env.example backend/.env
+Copy-Item bot/targets.example.json targets.json
+docker compose up -d --build --remove-orphans
+```
+
+`BOT_SERVICE_TOKEN` в корневом `.env` и `backend/.env` должен совпадать.
 
 ## Документация
 
