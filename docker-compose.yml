@@ -24,16 +24,6 @@ services:
         condition: service_healthy
     restart: "no"
 
-  bot-migrate:
-    build:
-      context: ./bot
-      dockerfile: Dockerfile.migrate
-    env_file:
-      - ${BOT_ENV_FILE:-./.env}
-    volumes:
-      - ${BOT_DATA_DIR:-./data}:/app/data
-    restart: "no"
-
   backend-import:
     image: hikari-secretary-backend:local
     env_file:
@@ -47,8 +37,6 @@ services:
       database:
         condition: service_healthy
       backend-migrate:
-        condition: service_completed_successfully
-      bot-migrate:
         condition: service_completed_successfully
     restart: "no"
 
@@ -85,8 +73,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      bot-migrate:
-        condition: service_completed_successfully
       backend-import:
         condition: service_completed_successfully
     restart: unless-stopped
