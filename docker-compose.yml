@@ -61,6 +61,7 @@ services:
       TARGETS_PATH: /app/targets.json
     volumes:
       - ${BOT_TARGETS_FILE:-./targets.json}:/app/targets.json:ro
+      - ${BOT_DATA_DIR:-./data}:/app/data
     depends_on:
       database:
         condition: service_healthy
