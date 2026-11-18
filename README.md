@@ -18,6 +18,7 @@
 [Канал клуба](https://t.me/Hikari_ITMO) ·
 [Telegram-бот](https://t.me/hikari_secretary_bot) ·
 [Документация](docs/README.md) ·
+[История релизов](CHANGELOG.md) ·
 [Планы развития](docs/miniapp-plan.md)
 
 ## Возможности
@@ -49,12 +50,13 @@ Miniapp пока доступен только администраторам. �
 
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
-| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` — последний описанный релиз в [истории](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md) | Telegram-интерфейс и доставка сообщений |
+| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` | Telegram-интерфейс и доставка сообщений |
 | [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.0` | Бизнес-логика, API, авторизация и PostgreSQL |
 | [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.0` | Административная панель на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
-пока не назначена; последние изменения могут быть новее описанного релиза.
+пока не назначена. Релизы backend, miniapp и изменения интеграции описаны
+в [общей истории платформы](CHANGELOG.md).
 
 ## Запуск
 
