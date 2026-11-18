@@ -4,6 +4,8 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
+import shutil
+import tempfile
 
 
 def validate(path):
@@ -26,11 +28,23 @@ def snapshot(source, destination):
     temporary = destination.with_name(destination.name + '.tmp')
     try:
         temporary.unlink(missing_ok=True)
-        with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)) as old:
-            with closing(sqlite3.connect(temporary)) as new:
-                old.backup(new)
-                # The immutable import must not depend on WAL/SHM sidecars.
-                new.execute('PRAGMA journal_mode=DELETE')
+        # The legacy bot must be stopped: copying these files is not an atomic
+        # snapshot of a live writer. Never open SQLite on the read-only mount:
+        # WAL recovery may need a writable SHM file, even with mode=ro.
+        with tempfile.TemporaryDirectory(prefix='hikari-sqlite-') as folder:
+            staged = Path(folder) / 'source.sqlite3'
+            shutil.copyfile(source, staged)
+            for suffix in ('-wal', '-journal'):
+                sidecar = Path(str(source) + suffix)
+                if sidecar.is_file():
+                    shutil.copyfile(sidecar, Path(str(staged) + suffix))
+            # SHM is a disposable index: SQLite rebuilds it from the copied WAL.
+            # immutable=1 is deliberately not used: it would ignore WAL data.
+            with closing(sqlite3.connect(staged)) as old:
+                with closing(sqlite3.connect(temporary)) as new:
+                    old.backup(new)
+                    # The immutable import must not depend on WAL/SHM sidecars.
+                    new.execute('PRAGMA journal_mode=DELETE')
         validate(temporary)
         os.chmod(temporary, 0o444)
         os.replace(temporary, destination)
