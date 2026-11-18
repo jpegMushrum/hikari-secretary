@@ -1,70 +1,87 @@
-# Hikari Secretary
+# 光 · Hikari Secretary
 
-![Статус](https://img.shields.io/badge/status-restructuring-F59E0B)
-![Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![Статус: работает](https://img.shields.io/badge/status-running-2EA44F)
+[![Bot: последний описанный релиз 0.9.0](https://img.shields.io/badge/bot-0.9.0-5865F2)](bot/CHANGELOG.md)
+[![Backend: 0.3.0](https://img.shields.io/badge/backend-0.3.0-00ADD8)](backend/README.md)
+[![Miniapp: 0.1.0](https://img.shields.io/badge/miniapp-0.1.0-61DAFB)](miniapp/README.md)
 
-Интеграционный репозиторий платформы клуба японского языка **Hikari ITMO**.
-Он объединит Telegram-бота для участников, Go-бэкенд и Telegram Mini App для
-администраторов.
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-[Канал Hikari ITMO](https://t.me/Hikari_ITMO) · [Telegram-бот](https://t.me/hikari_secretary_bot)
+Платформа клуба японского языка **Hikari ITMO**: встречи, участники,
+публикации и обратная связь. Основное направление — статистика посещений
+и помощь организаторам клуба.
 
-## Статус перехода
+[Канал клуба](https://t.me/Hikari_ITMO) ·
+[Telegram-бот](https://t.me/hikari_secretary_bot) ·
+[Документация](docs/README.md) ·
+[Планы развития](docs/miniapp-plan.md)
 
-Все три компонента уже подключены как Git-сабмодули. Рабочий Telegram-бот
-**v0.9.0** находится в [`bot/`](bot/README.md); backend перешёл в технический
-релиз `v0.3.0-dev` с первым рабочим Bot API и импортом первого доменного среза;
-Mini App имеет первую браузерную версию с отдельным локальным стендом.
+## Возможности
 
-| Компонент | Будущий репозиторий | Состояние |
+**Для участников:** регистрация на мероприятия, отмена записи, профиль,
+напоминания, подтверждение посещения и отзывы — через Telegram-бота.
+
+**Для организаторов:**
+
+- Мероприятия, списки участников, посещаемость и статистика.
+- Публикации в каналы, чаты и топики: текст, фотографии, альбомы и rich messages.
+- Черновики из сообщений боту, предпросмотр и настройка публикации в miniapp.
+- Отложенные отправки, отзывы и настраиваемые таблицы.
+- ИИ-материалы для разговорного клуба при подключённом сервисе генерации.
+
+Miniapp пока доступен только администраторам. Управление через бота
+сохраняется: сообщение готовится в Telegram, дальнейшую настройку можно
+продолжить в чате или в панели.
+
+## Состояние и версии
+
+Бот работает на Go backend с PostgreSQL. Административная miniapp развёрнута
+для закрытого тестирования. Ближайшие задачи — проверка полных сценариев,
+исправление ошибок и упрощение интерфейса.
+
+Этот репозиторий — основная точка входа и сборки всей платформы.
+Компоненты подключены как Git-сабмодули; состав сборки фиксируется их
+коммитами в корневом репозитории.
+
+| Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
-| `bot/` | `hikari-secretary-bot` | Стабильный участнический интерфейс v0.9.0 |
-| `backend/` | `hikari-secretary-backend` | Go v0.3.0-dev: PostgreSQL, Bot API, миграции и первый доменный срез |
-| `miniapp/` | `hikari-secretary-miniapp` | Первая браузерная версия: мероприятия, участники, ИИ, отзывы |
+| [Бот](bot/README.md) | `0.9.0` — последний описанный релиз в [истории](bot/CHANGELOG.md) | Telegram-интерфейс и доставка сообщений |
+| [Backend](backend/README.md) | `0.3.0` | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](miniapp/README.md) | `0.1.0` | Административная панель на React и TypeScript |
 
-## Два режима запуска
+Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
+пока не назначена; последние изменения могут быть новее описанного релиза.
 
-Все команды выполняются из корня интеграционного репозитория. Файлы
-самостоятельные, объединять их через несколько `-f` не нужно.
+## Запуск
 
-| Файл | Назначение |
-| --- | --- |
-| `docker-compose.production.yml` | Сервер: PostgreSQL, снимок SQLite, миграции, импорт, backend, бот и miniapp с HTTPS на 8443/880 |
-| `docker-compose.bot-local.yml` | Локальная проверка: PostgreSQL, backend, тестовый бот и miniapp на localhost:5173 с браузерным входом |
-
-```powershell
-# Локально; .env содержит токен тестового бота
- docker compose -f docker-compose.bot-local.yml up -d --build
-```
-
-Локальная база — подготовленная копия импорта, выбирается через
-`LOCAL_DATABASE_NAME`. Имя проекта и volumes сохранены. Бот действительно
-отправляет публикации; отдельного demo seed больше нет.
-Подробности: [miniapp/README.md](miniapp/README.md).
+Из корня проекта, после настройки выбранного окружения:
 
 ```sh
-# Сервер, после подготовки сертификата и перехода с SQLite
- docker compose -f docker-compose.production.yml up -d --build
+# Локальная проверка с тестовым ботом
+docker compose -f docker-compose.bot-local.yml up -d --build
+
+# Production
+docker compose -f docker-compose.production.yml up -d --build
 ```
 
-Серверные `.env`, `backend/.env`, `targets.json` и `data/` сохраняются отдельно.
-Порядок переноса, проверки очередей и отката: [docs/production.md](docs/production.md).
-Примеры настроек: [.env.example](.env.example), [backend/.env.example](backend/.env.example).
-Обычный `docker compose up` без `-f` больше не используется.
+Это два самостоятельных стека. Локальный открывает miniapp на
+`localhost:5173`; production использует HTTPS с настраиваемыми портами.
+
+Перед первым запуском: [локальное окружение](miniapp/README.md) или
+[production, сертификат и перенос SQLite → PostgreSQL](docs/production.md).
+Настройки находятся в корневом `.env` и `backend/.env`, цели публикаций —
+в `targets.json`. Секреты, сертификаты и рабочие данные не публикуются в Git.
 
 ## Документация
 
-- [Структура репозитория и план перехода](docs/repository-layout.md)
-- [Целевая архитектура платформы](docs/architecture.md)
-- [Каталог use cases](docs/use-cases.md)
-- [Модель данных и план переноса](docs/domain-model.md)
-- [Документация текущего бота v0.9.0](bot/docs/README.md)
-- [Документация backend v0.3.0-dev](backend/README.md)
-- [История изменений бота](bot/CHANGELOG.md)
-
-## Безопасность данных
-
-Не добавляйте в Git `.env`, `targets.json` и `data/`. В них находятся токены,
-идентификаторы Telegram и персональные данные участников. При переносе бота в
-отдельный репозиторий рабочие конфигурация и база должны быть перенесены на
-сервере отдельно, безопасным способом.
+- [Участникам клуба](bot/docs/participant-guide.md)
+- [Администраторам](bot/docs/admin-guide.md)
+- [Черновики и miniapp](bot/docs/miniapp-handoff.md)
+- [Архитектура платформы](docs/architecture.md)
+- [API backend](backend/openapi/openapi.yaml)
+- [Roadmap и приоритеты](docs/miniapp-plan.md)
+- [Все руководства](docs/README.md)
