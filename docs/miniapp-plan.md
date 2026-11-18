@@ -70,7 +70,7 @@ Mini App в перспективе предназначен и для админ
 По согласованному переходу к коду реализованы тёмная тема с красным
 акцентом, левое меню, четыре модуля (мероприятия, участники, ИИ, отзывы),
 серверные таблицы и отдельный dev-стенд с Go API/PostgreSQL.
-Запуск и границы: [miniapp/README.md](../miniapp/README.md).
+Запуск и границы: [miniapp/README.md](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md).
 Макеты представлены первыми экранами в коде; визуальное согласование
 мобильной и широкой версии остаётся следующим шагом с владельцем.
 
@@ -264,8 +264,8 @@ backend по внутренней сети Docker. Внутренний Bot API 
 
 ### Зависимости от backend
 
-Существующий контракт описан в [OpenAPI](../backend/openapi/openapi.yaml)
-и [руководстве Admin API](../backend/docs/admin-api.md).
+Существующий контракт описан в [OpenAPI](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/openapi/openapi.yaml)
+и [руководстве Admin API](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/docs/admin-api.md).
 
 API статистики людей, мероприятий, участников, публикаций, медиа и отзывов
 служит основой первого интерфейса. Наличие внутреннего Bot API для ИИ

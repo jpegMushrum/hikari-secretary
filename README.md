@@ -1,9 +1,9 @@
 # 光 · Hikari Secretary
 
 ![Статус: работает](https://img.shields.io/badge/status-running-2EA44F)
-[![Bot: последний описанный релиз 0.9.0](https://img.shields.io/badge/bot-0.9.0-5865F2)](bot/CHANGELOG.md)
-[![Backend: 0.3.0](https://img.shields.io/badge/backend-0.3.0-00ADD8)](backend/README.md)
-[![Miniapp: 0.1.0](https://img.shields.io/badge/miniapp-0.1.0-61DAFB)](miniapp/README.md)
+[![Bot: последний описанный релиз 0.9.0](https://img.shields.io/badge/bot-0.9.0-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
+[![Backend: 0.3.0](https://img.shields.io/badge/backend-0.3.0-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
+[![Miniapp: 0.1.0](https://img.shields.io/badge/miniapp-0.1.0-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
@@ -49,9 +49,9 @@ Miniapp пока доступен только администраторам. �
 
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
-| [Бот](bot/README.md) | `0.9.0` — последний описанный релиз в [истории](bot/CHANGELOG.md) | Telegram-интерфейс и доставка сообщений |
-| [Backend](backend/README.md) | `0.3.0` | Бизнес-логика, API, авторизация и PostgreSQL |
-| [Miniapp](miniapp/README.md) | `0.1.0` | Административная панель на React и TypeScript |
+| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` — последний описанный релиз в [истории](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md) | Telegram-интерфейс и доставка сообщений |
+| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.0` | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.0` | Административная панель на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
 пока не назначена; последние изменения могут быть новее описанного релиза.
@@ -71,17 +71,17 @@ docker compose -f docker-compose.production.yml up -d --build
 Это два самостоятельных стека. Локальный открывает miniapp на
 `localhost:5173`; production использует HTTPS с настраиваемыми портами.
 
-Перед первым запуском: [локальное окружение](miniapp/README.md) или
+Перед первым запуском: [локальное окружение](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) или
 [production, сертификат и перенос SQLite → PostgreSQL](docs/production.md).
 Настройки находятся в корневом `.env` и `backend/.env`, цели публикаций —
 в `targets.json`. Секреты, сертификаты и рабочие данные не публикуются в Git.
 
 ## Документация
 
-- [Участникам клуба](bot/docs/participant-guide.md)
-- [Администраторам](bot/docs/admin-guide.md)
-- [Черновики и miniapp](bot/docs/miniapp-handoff.md)
+- [Участникам клуба](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/participant-guide.md)
+- [Администраторам](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/admin-guide.md)
+- [Черновики и miniapp](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/miniapp-handoff.md)
 - [Архитектура платформы](docs/architecture.md)
-- [API backend](backend/openapi/openapi.yaml)
+- [API backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/openapi/openapi.yaml)
 - [Roadmap и приоритеты](docs/miniapp-plan.md)
 - [Все руководства](docs/README.md)

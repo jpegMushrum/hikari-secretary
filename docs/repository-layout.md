@@ -42,7 +42,7 @@ App будут работать с ним через API; прямой дост�
 Оба содержат необходимые зависимости; дополнительных overlay нет.
 Имена проектов и volumes сохранены. Отдельный Compose backend и демостенд
 удалены; при необходимости можно запускать выбранные сервисы локального файла.
-Инструкции: [production](production.md), [локальная разработка](../miniapp/README.md).
+Инструкции: [production](production.md), [локальная разработка](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md).
 
 ## Порядок перехода
 

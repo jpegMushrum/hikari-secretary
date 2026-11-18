@@ -63,7 +63,7 @@ proxy наружу.
 ## Модули backend
 
 Административные мероприятия, публикации, медиа и отзывы реализованы:
-[контракт и эксплуатация](../backend/docs/admin-api.md).
+[контракт и эксплуатация](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/docs/admin-api.md).
 Создание мероприятий и операции Publishing используют общую реализацию
 для bot/admin адаптеров; отмена мероприятия использует общий outbox и аудит.
 
