@@ -1,0 +1,47 @@
+server {
+    listen 80;
+    server_name ${MINIAPP_DOMAIN};
+    server_tokens off;
+    location = /healthz { access_log off; return 200 'ok'; }
+    location / { return 308 https://${MINIAPP_DOMAIN}:${MINIAPP_HTTPS_PORT}$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${MINIAPP_DOMAIN};
+    ssl_certificate /etc/hikari/tls/fullchain.pem;
+    ssl_certificate_key /etc/hikari/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TLS:10m;
+    ssl_session_timeout 1d;
+    server_tokens off;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 11m;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+    location = /healthz { access_log off; return 200 'ok'; }
+    location /api/v1/admin/ {
+        proxy_pass http://backend:8080;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        add_header Cache-Control no-store always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location /api/ { return 404; }
+    location /internal/ { return 404; }
+    location ~ /\. { return 404; }
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control 'public, immutable';
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control no-cache;
+        add_header X-Content-Type-Options nosniff always;
+    }
+}

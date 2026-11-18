@@ -1,0 +1,131 @@
+# Standalone stack; run with docker compose -f docker-compose.production.yml up -d --build
+name: hikari-secretary
+services:
+  database:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file:
+    - ${BACKEND_ENV_FILE:-./backend/.env}
+    volumes:
+    - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  backend-migrate:
+    image: hikari-secretary-backend:local
+    env_file:
+    - ${BACKEND_ENV_FILE:-./backend/.env}
+    entrypoint:
+    - /app/migrate
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: 'no'
+  backend-import:
+    image: hikari-secretary-backend:local
+    env_file:
+    - ${BACKEND_ENV_FILE:-./backend/.env}
+    entrypoint:
+    - /bin/sh
+    - -ec
+    command:
+    - exec /app/import-legacy --sqlite /legacy/bot.sqlite3 --apply --json --database-url "$$DATABASE_URL"
+    volumes:
+    - legacy_snapshot:/legacy:ro
+    depends_on:
+      database:
+        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
+      legacy-snapshot:
+        condition: service_completed_successfully
+    restart: 'no'
+  backend:
+    image: hikari-secretary-backend:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+    - ${BACKEND_ENV_FILE:-./backend/.env}
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-90}
+      AI_TOPIC_TARGET_KEY: ${AI_TOPIC_TARGET_KEY:-}
+      AI_TOPIC_AUTO_PUBLISH_TIME: ${AI_TOPIC_AUTO_PUBLISH_TIME:-}
+      AI_TOPIC_QUESTION_COUNT: ${AI_TOPIC_QUESTION_COUNT:-5}
+      AI_TOPIC_VOCABULARY_COUNT: ${AI_TOPIC_VOCABULARY_COUNT:-10}
+      AI_TOPIC_GRAMMAR_COUNT: ${AI_TOPIC_GRAMMAR_COUNT:-3}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+      TARGETS_PATH: /app/targets.json
+      APP_ENV: production
+    volumes:
+    - ${BOT_TARGETS_FILE:-./targets.json}:/app/targets.json:ro
+    - ${BOT_DATA_DIR:-./data}:/app/data
+    depends_on:
+      database:
+        condition: service_healthy
+      backend-import:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget --spider -q http://127.0.0.1:8080/healthz
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    env_file:
+    - ${BOT_ENV_FILE:-./.env}
+    environment:
+      BACKEND_URL: http://backend:8080
+      MINIAPP_URL: https://${MINIAPP_DOMAIN:-hikari.jpegmushrum.ru}:${MINIAPP_HTTPS_PORT:-8443}
+    volumes:
+    - ${BOT_DATA_DIR:-./data}:/app/data
+    - ${BOT_TARGETS_FILE:-./targets.json}:/app/targets.json:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      backend-import:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  legacy-snapshot:
+    image: python:3.12-slim
+    entrypoint:
+    - python
+    - /scripts/snapshot_sqlite.py
+    - /source/bot.sqlite3
+    - /snapshot/bot.sqlite3
+    volumes:
+    - ${LEGACY_DATA_DIR:-./data}:/source:ro
+    - ./deploy/snapshot_sqlite.py:/scripts/snapshot_sqlite.py:ro
+    - legacy_snapshot:/snapshot
+    restart: 'no'
+  miniapp:
+    build: ./miniapp
+    environment:
+      MINIAPP_DOMAIN: ${MINIAPP_DOMAIN:-hikari.jpegmushrum.ru}
+      MINIAPP_HTTPS_PORT: ${MINIAPP_HTTPS_PORT:-8443}
+      NGINX_ENVSUBST_FILTER: ^MINIAPP_
+    ports:
+    - ${MINIAPP_BIND_ADDRESS:-0.0.0.0}:${MINIAPP_HTTP_PORT:-880}:80
+    - ${MINIAPP_BIND_ADDRESS:-0.0.0.0}:${MINIAPP_HTTPS_PORT:-8443}:443
+    volumes:
+    - ./deploy/nginx.production.conf.template:/etc/nginx/templates/default.conf.template:ro
+    - ${MINIAPP_TLS_DIR:-./data-tls}:/etc/hikari/tls:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres_data: null
+  legacy_snapshot: null

@@ -10,7 +10,8 @@ hikari-secretary/
 ├── miniapp/                     # hikari-secretary-miniapp
 ├── deploy/                      # production-конфигурация и инструкции
 ├── docs/                        # общая документация платформы
-├── docker-compose.yml           # полный интеграционный стек
+├── docker-compose.production.yml # серверный стек
+├── docker-compose.bot-local.yml  # локальный тестовый стек
 ├── .github/workflows/           # интеграционный CI/CD
 └── .gitmodules
 ```
@@ -35,33 +36,13 @@ App будут работать с ним через API; прямой дост�
 
 ## Docker Compose
 
-Один `docker-compose.yml` в корне собирает и запускает доступный интеграционный
-стек:
-
-```text
-postgres → migrations → importer → backend → bot
-```
-
-Mini App будет добавлен в эту схему после реализации. Сейчас Compose собирает
-образы из `./bot` и `./backend`, применяет обе миграции, выполняет идемпотентный
-импорт SQLite и запускает bot только после успешной готовности backend.
-
-Не нужно запускать три независимых production Compose-стека: это создаст разные
-сети, переменные окружения и неявные зависимости. Отдельные репозитории могут
-иметь собственные Dockerfile, тесты и узкий Compose-файл только для локальных
-интеграционных тестов — например, backend вместе с временным PostgreSQL.
-
-Корневой Compose требует `backend/.env`, корневой `.env` и `targets.json`.
-Примеры конфигурации находятся в соответствующих каталогах. Для запуска:
-
-```bash
-docker compose up -d --build --remove-orphans
-```
-
-Рабочая конфигурация и SQLite-данные остаются в корне, а интеграционный Compose
-использует их через `BOT_ENV_FILE`, `BOT_TARGETS_FILE` и `BOT_DATA_DIR`.
-Отдельный `bot/docker-compose.yml` используется только для автономной
-разработки bot.
+Остались два самостоятельных файла в корне: `docker-compose.production.yml`
+и `docker-compose.bot-local.yml`. Первый обслуживает production и переход
+с SQLite, второй — локальный backend, miniapp и тестового бота.
+Оба содержат необходимые зависимости; дополнительных overlay нет.
+Имена проектов и volumes сохранены. Отдельный Compose backend и демостенд
+удалены; при необходимости можно запускать выбранные сервисы локального файла.
+Инструкции: [production](production.md), [локальная разработка](../miniapp/README.md).
 
 ## Порядок перехода
 

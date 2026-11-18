@@ -1,17 +1,89 @@
-# Overlay for the real TEST bot and a copy of the imported local database.
-# docker compose -f docker-compose.dev.yml -f docker-compose.bot-local.yml up -d --build
+# Standalone stack; run with docker compose -f docker-compose.bot-local.yml up -d --build
+name: hikari-miniapp-dev
 services:
-  migrate:
+  database:
+    image: postgres:18-alpine
     environment:
-      DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/hikari_bot_local_20261117?sslmode=disable
-  seed:
-    entrypoint: ['true']
-  backend:
-    environment:
-      DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/hikari_bot_local_20261117?sslmode=disable
+      POSTGRES_USER: hikari_dev
+      POSTGRES_PASSWORD: local_dev_only
+      POSTGRES_DB: hikari_dev
+    ports:
+    - 127.0.0.1:55439:5432
     volumes:
-      - ./targets.json:/app/targets.json:ro
-      - ./data/media:/app/data/media
+    - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U hikari_dev -d hikari_dev
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    image: hikari-miniapp-dev-backend:local
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/${LOCAL_DATABASE_NAME:-hikari_bot_local_20261117}?sslmode=disable
+      TELEGRAM_BOT_TOKEN: local-miniapp-only-not-a-telegram-token
+      ADMIN_TELEGRAM_IDS: '123456789'
+      BOT_SERVICE_TOKEN: local-dev-service-not-for-production
+      TARGETS_PATH: /app/targets.json
+    entrypoint:
+    - /app/migrate
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: 'no'
+  backend:
+    image: hikari-miniapp-dev-backend:local
+    build: ./backend
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/${LOCAL_DATABASE_NAME:-hikari_bot_local_20261117}?sslmode=disable
+      TELEGRAM_BOT_TOKEN: local-miniapp-only-not-a-telegram-token
+      ADMIN_TELEGRAM_IDS: '123456789'
+      BOT_SERVICE_TOKEN: local-dev-service-not-for-production
+      TARGETS_PATH: /app/targets.json
+    volumes:
+    - ./targets.json:/app/targets.json:ro
+    - media:/app/data
+    - ./data/media:/app/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget --spider -q http://127.0.0.1:8080/healthz
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  gateway:
+    image: node:24-alpine
+    user: node
+    read_only: true
+    environment:
+      APP_ENV: development
+      BACKEND_URL: http://backend:8080
+    command:
+    - node
+    - /app/gateway.mjs
+    volumes:
+    - ./miniapp/dev/gateway.mjs:/app/gateway.mjs:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+  miniapp:
+    build: ./miniapp
+    ports:
+    - 127.0.0.1:5173:80
+    volumes:
+    - ./miniapp/dev/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+    - gateway
+    restart: unless-stopped
   bot:
     build: ./bot
     env_file: ./.env
@@ -25,8 +97,12 @@ services:
       AI_TOPIC_AUTO_PUBLISH_TIME: ''
       AI_TOPIC_TARGET_KEY: ''
     volumes:
-      - ./targets.json:/app/targets.json:ro
-      - ./data/media:/app/data/media
+    - ./targets.json:/app/targets.json:ro
+    - ./data/media:/app/data/media
     depends_on:
-      backend: {condition: service_healthy}
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+volumes:
+  postgres_data: null
+  media: null

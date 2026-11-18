@@ -22,44 +22,35 @@ Mini App имеет первую браузерную версию с отдел
 | `backend/` | `hikari-secretary-backend` | Go v0.3.0-dev: PostgreSQL, Bot API, миграции и первый доменный срез |
 | `miniapp/` | `hikari-secretary-miniapp` | Первая браузерная версия: мероприятия, участники, ИИ, отзывы |
 
-Корневой [`docker-compose.yml`](docker-compose.yml) собирает backend и bot в
-правильной последовательности: PostgreSQL → миграции → импорт SQLite →
-backend → bot. Mini App пока не входит в production-стек; её отдельный
-стенд запускается через `docker-compose.dev.yml`.
+## Два режима запуска
 
-## Mini App локально
+Все команды выполняются из корня интеграционного репозитория. Файлы
+самостоятельные, объединять их через несколько `-f` не нужно.
 
-```powershell
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-Открыть [localhost:5173](http://localhost:5173): тёмная тема, четыре
-административных раздела и настоящие Go API/PostgreSQL с вымышленными
-демоданными. Этот стенд не использует рабочие `.env`, SQLite и Telegram-бота.
-Подробности и команды проверок — [miniapp/README.md](miniapp/README.md).
-
-## Основной стек бота
-
-Рабочие `.env`, `targets.json` и `data/` остаются в корне интеграционного
-репозитория. Основной запуск выполняется корневым Compose; отдельный
-`bot/docker-compose.yml` остаётся доступен для автономной разработки bot.
-
-Примеры конфигурации разделены по сервисам: [.env.example](.env.example) для
-текущего корневого запуска бота, [backend/.env.example](backend/.env.example)
-для Go backend и [bot/.env.example](bot/.env.example) для самостоятельного
-запуска bot. Рабочие `.env` не коммитятся.
-
-Для интеграционного запуска скопируйте примеры, заполните секреты и создайте
-рабочий файл целей публикации:
+| Файл | Назначение |
+| --- | --- |
+| `docker-compose.production.yml` | Сервер: PostgreSQL, снимок SQLite, миграции, импорт, backend, бот и miniapp с HTTPS на 8443/880 |
+| `docker-compose.bot-local.yml` | Локальная проверка: PostgreSQL, backend, тестовый бот и miniapp на localhost:5173 с браузерным входом |
 
 ```powershell
-Copy-Item .env.example .env
-Copy-Item backend/.env.example backend/.env
-Copy-Item bot/targets.example.json targets.json
-docker compose up -d --build --remove-orphans
+# Локально; .env содержит токен тестового бота
+ docker compose -f docker-compose.bot-local.yml up -d --build
 ```
 
-`BOT_SERVICE_TOKEN` в корневом `.env` и `backend/.env` должен совпадать.
+Локальная база — подготовленная копия импорта, выбирается через
+`LOCAL_DATABASE_NAME`. Имя проекта и volumes сохранены. Бот действительно
+отправляет публикации; отдельного demo seed больше нет.
+Подробности: [miniapp/README.md](miniapp/README.md).
+
+```sh
+# Сервер, после подготовки сертификата и перехода с SQLite
+ docker compose -f docker-compose.production.yml up -d --build
+```
+
+Серверные `.env`, `backend/.env`, `targets.json` и `data/` сохраняются отдельно.
+Порядок переноса, проверки очередей и отката: [docs/production.md](docs/production.md).
+Примеры настроек: [.env.example](.env.example), [backend/.env.example](backend/.env.example).
+Обычный `docker compose up` без `-f` больше не используется.
 
 ## Документация
 
