@@ -176,3 +176,12 @@ python -m unittest discover -s deploy
 оставаться остановленным. Не удаляйте исходные WAL/SHM и не включайте
 `immutable=1` при чтении источника: зафиксированные изменения могут быть
 только в WAL. Volume снимка и исходную базу удалять не нужно.
+
+
+Мигратор читает только `DATABASE_URL`; токены Telegram/ИИ и `targets.json`
+ему не нужны. Если старый образ завершился с `invalid configuration: read
+ targets`, обновите backend и выполните `docker compose -f
+ docker-compose.production.yml build backend`, затем повторите
+`run --rm backend-migrate`. Успешный dry-run SQLite не означает, что миграции
+PostgreSQL применены: импорт с записью выполняется только после успешного
+завершения мигратора.
