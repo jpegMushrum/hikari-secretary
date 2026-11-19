@@ -45,24 +45,46 @@ nginx -t
         self.assertIn('cannot load certificate', result.stderr)
         self.assertIn('/etc/hikari/tls/fullchain.pem', result.stderr)
 
-    def test_production_contract(self):
+    def production_services(self, *profile_options):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run([
             'docker', 'compose', '--env-file', '.env.example',
-            '-f', 'docker-compose.production.yml',
+            '-f', 'docker-compose.production.yml', *profile_options,
             'config', '--no-env-resolution', '--format', 'json',
         ], cwd=root, check=True, capture_output=True, text=True)
-        services = json.loads(result.stdout)['services']
-        self.assertNotIn('gateway', services)
+        return json.loads(result.stdout)['services']
+
+    def test_production_contract(self):
+        services = self.production_services()
+        self.assertEqual(set(services), {'database', 'backend-migrate', 'backend', 'bot', 'miniapp'})
+        self.assertEqual(services['backend']['depends_on']['backend-migrate']['condition'], 'service_completed_successfully')
+        self.assertEqual(services['bot']['depends_on']['backend']['condition'], 'service_healthy')
         for service in ['database', 'backend', 'bot']:
             self.assertFalse(services[service].get('ports'))
         web = services['miniapp']
         self.assertEqual({int(p['published']) for p in web['ports']}, {880, 8443})
         self.assertEqual(services['bot']['environment']['MINIAPP_URL'], 'https://hikari.jpegmushrum.ru:8443')
-        source = next(v for v in services['backend-import']['volumes'] if v['target']=='/legacy')
+
+    def test_legacy_import_is_opt_in_and_defaults_to_dry_run(self):
+        services = self.production_services('--profile', 'legacy-import')
+        importer = services['backend-import']
+        snapshot = services['legacy-snapshot']
+        self.assertEqual(importer['profiles'], ['legacy-import'])
+        self.assertEqual(snapshot['profiles'], ['legacy-import'])
+        self.assertNotEqual(importer['image'], services['backend']['image'])
+        self.assertEqual(importer['build']['dockerfile'], 'Dockerfile.import-legacy')
+        self.assertEqual(importer['build']['context'], services['backend']['build']['context'])
+        # The exec entrypoint lets a compose run override supply --apply explicitly.
+        dockerfile = Path(importer['build']['context']) / importer['build']['dockerfile']
+        entrypoint = next(line for line in dockerfile.read_text().splitlines() if line.startswith('ENTRYPOINT '))
+        self.assertEqual(json.loads(entrypoint.removeprefix('ENTRYPOINT ')), ['/app/import-legacy'])
+        self.assertIsNone(importer.get('entrypoint'))
+        self.assertEqual(importer['command'], ['--sqlite', '/legacy/bot.sqlite3', '--json'])
+        source = next(v for v in importer['volumes'] if v['target'] == '/legacy')
         self.assertEqual(source['source'], 'legacy_snapshot')
         self.assertTrue(source['read_only'])
         for dependency in ['legacy-snapshot', 'backend-migrate']:
-            self.assertEqual(services['backend-import']['depends_on'][dependency]['condition'], 'service_completed_successfully')
-        self.assertEqual(services['backend']['depends_on']['backend-import']['condition'], 'service_completed_successfully')
-        self.assertEqual(services['bot']['depends_on']['backend-import']['condition'], 'service_completed_successfully')
+            self.assertEqual(importer['depends_on'][dependency]['condition'], 'service_completed_successfully')
+        self.assertEqual(importer['depends_on']['database']['condition'], 'service_healthy')
+        sqlite_source = next(v for v in snapshot['volumes'] if v['target'] == '/source')
+        self.assertTrue(sqlite_source['read_only'])

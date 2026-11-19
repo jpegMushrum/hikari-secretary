@@ -5,26 +5,24 @@
 Выпуск сертификата Let's Encrypt через DNS, настройка DNS и запуск на сервере
 выполняются отдельно. Этот документ не означает, что сервер уже обновлён.
 
-## Обновление Backend 0.3.1 и Miniapp 0.1.1 на действующем стенде
+## Обновление действующего стенда
 
-Этот порядок подходит для перехода с Backend 0.3.0 и Miniapp 0.1.0, когда
-production уже работает с PostgreSQL. Обновление меняет административный
-API и интерфейс. Схема БД и набор переменных окружения прежние.
+Этот порядок подходит для production, уже работающего с PostgreSQL.
 
 После публикации обновления перейдите в корень серверного репозитория
-на ветке `main`. Получите зафиксированные в ней версии обоих компонентов,
-соберите образы и дождитесь готовности backend перед запуском новой miniapp.
+на ветке `main`. Получите зафиксированные в ней версии компонентов и
+запустите обычный стек:
 
 ```sh
 git pull --ff-only
 git submodule update --init --recursive
-docker compose -f docker-compose.production.yml build backend miniapp
-docker compose -f docker-compose.production.yml up -d --no-deps --wait backend
-docker compose -f docker-compose.production.yml up -d --no-deps --force-recreate miniapp
+docker compose -f docker-compose.production.yml up -d --build
+docker compose -f docker-compose.production.yml ps
 ```
 
-`--no-deps` позволяет использовать работающую PostgreSQL и пропустить
-одноразовые сервисы первоначального переноса. Для проверки откройте «Отзывы»
+Compose ждёт готовности PostgreSQL и успешного применения миграций перед
+запуском backend. Снимок и импорт запускаются отдельно в профиле
+`legacy-import`. Для проверки откройте «Отзывы»
 в Telegram под администратором, найдите отзыв по известному ID и проверьте,
 что фильтр из карточки участника показывает отзывы именно этого человека.
 
@@ -115,21 +113,36 @@ Production Compose сам задаёт `MINIAPP_URL` с доменом и пор
 
 ```sh
 docker compose -f docker-compose.production.yml config --quiet
-docker compose -f docker-compose.production.yml build
+docker compose -f docker-compose.production.yml build backend
+docker compose -f docker-compose.production.yml --profile legacy-import build backend-import
 ```
 
 5. Выполнить снимок, миграции и импорт без запуска бота:
 
 ```sh
-docker compose -f docker-compose.production.yml up -d database
 docker compose -f docker-compose.production.yml run --rm legacy-snapshot
-docker compose -f docker-compose.production.yml run --rm backend-migrate
-docker compose -f docker-compose.production.yml run --rm --no-deps --entrypoint /app/import-legacy backend-import --sqlite /legacy/bot.sqlite3 --json
-docker compose -f docker-compose.production.yml run --rm backend-import
+docker compose -f docker-compose.production.yml up -d --wait database
+docker compose -f docker-compose.production.yml run --rm --no-deps backend-migrate
+docker compose -f docker-compose.production.yml run --rm --no-deps backend-import
 ```
 
-Сначала проверить отчёт dry-run: `Valid=true` и ожидаемые количества.
-Не продолжать при ошибке любого шага. После остановки старого бота SQLite и журналы `-wal`/`-journal` копируются
+Сервисы `legacy-snapshot` и `backend-import` входят в профиль `legacy-import`.
+При явном запуске сервиса через `run` Compose активирует его профиль.
+Импортёр собирается из `backend/Dockerfile.import-legacy` в отдельный образ
+`hikari-secretary-import-legacy:local`. По умолчанию он читает
+`/legacy/bot.sqlite3` и выдаёт отчёт JSON в режиме dry-run.
+`--no-deps` в командах переноса используется после выполнения предыдущих
+шагов: для импорта должны быть готовы PostgreSQL, миграции и снимок.
+
+Проверьте в отчёте dry-run `"valid": true` и ожидаемые количества. После
+успешной проверки примените импорт явно:
+
+```sh
+docker compose -f docker-compose.production.yml run --rm --no-deps backend-import --sqlite /legacy/bot.sqlite3 --apply --json
+```
+
+При ошибке любого шага остановите перенос. После остановки старого бота
+SQLite и журналы `-wal`/`-journal` копируются
 из read-only каталога во временный записываемый каталог. Там SQLite
 восстанавливает служебный SHM и создаёт снимок через backup API
 (включая зафиксированные WAL-записи). Снимок проверяется и атомарно сохраняется
@@ -152,12 +165,12 @@ docker compose -f docker-compose.production.yml run --rm backend-import
 ```sh
 docker compose -f docker-compose.production.yml up -d --build
 docker compose -f docker-compose.production.yml ps
-docker compose -f docker-compose.production.yml logs --tail=100 backend-import backend bot miniapp
+docker compose -f docker-compose.production.yml logs --tail=100 backend-migrate backend bot miniapp
 ```
 
-При обычном запуске Compose также соблюдает цепочку: снимок + PostgreSQL →
-миграции → импорт → backend → bot/miniapp. Если импорт упал, новый бот не
-запустится. Если HTTPS-конфигурация ошибочна, бот может работать независимо
+При первом переносе запускайте обычный стек после проверки успешного импорта.
+Обычный запуск выполняет цепочку PostgreSQL → миграции → backend → bot/miniapp.
+Если HTTPS-конфигурация ошибочна, бот может работать независимо
 от miniapp; проверьте обе службы. После проверки очередей вернуть workers
 в true и пересоздать bot. Просроченные задания могут отправиться сразу.
 

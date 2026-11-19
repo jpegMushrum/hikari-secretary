@@ -26,14 +26,14 @@ services:
         condition: service_healthy
     restart: 'no'
   backend-import:
-    image: hikari-secretary-backend:local
+    profiles: [legacy-import]
+    image: hikari-secretary-import-legacy:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.import-legacy
     env_file:
     - ${BACKEND_ENV_FILE:-./backend/.env}
-    entrypoint:
-    - /bin/sh
-    - -ec
-    command:
-    - exec /app/import-legacy --sqlite /legacy/bot.sqlite3 --apply --json --database-url "$$DATABASE_URL"
+    command: ["--sqlite", "/legacy/bot.sqlite3", "--json"]
     volumes:
     - legacy_snapshot:/legacy:ro
     depends_on:
@@ -70,7 +70,7 @@ services:
     depends_on:
       database:
         condition: service_healthy
-      backend-import:
+      backend-migrate:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -95,10 +95,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      backend-import:
-        condition: service_completed_successfully
     restart: unless-stopped
   legacy-snapshot:
+    profiles: [legacy-import]
     image: python:3.12-slim
     entrypoint:
     - python
