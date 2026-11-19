@@ -40,8 +40,9 @@ Miniapp пока доступен только администраторам. �
 
 ## Состояние и версии
 
-Бот работает на Go backend с PostgreSQL. Административная miniapp развёрнута
-для закрытого тестирования. Ближайшие задачи — проверка полных сценариев,
+Бот и административная miniapp работают через Go backend с PostgreSQL.
+SQLite используется только для ручного переноса со старой установки.
+Ближайшие задачи — проверка полных сценариев,
 исправление ошибок и упрощение интерфейса.
 
 Этот репозиторий — основная точка входа и сборки всей платформы.
@@ -70,6 +71,9 @@ Miniapp пока доступен только администраторам. �
 # Локальная проверка с тестовым ботом
 docker compose -f docker-compose.bot-local.yml up -d --build
 
+# Только браузерная панель с локальным API
+docker compose -f docker-compose.bot-local.yml up -d --build miniapp
+
 # Production
 docker compose -f docker-compose.production.yml up -d --build
 ```
@@ -82,8 +86,11 @@ docker compose -f docker-compose.production.yml up -d --build
 
 Перед первым запуском: [локальное окружение](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) или
 [production, сертификат и перенос SQLite → PostgreSQL](docs/production.md).
-Настройки находятся в корневом `.env` и `backend/.env`, цели публикаций —
-в `targets.json`. Секреты, сертификаты и рабочие данные не публикуются в Git.
+Для production заполните корневой `.env`, `backend/.env` и `targets.json`.
+Локальный стек берёт настройки backend из Compose. Для первого запуска
+на пустом локальном томе задайте `LOCAL_DATABASE_NAME=hikari_dev` в корневом
+`.env`. Чтобы увидеть импортированные данные, укажите имя уже восстановленной
+локальной базы. Цели тестового бота задаются в корневом `targets.json`.
 
 ## Документация
 
