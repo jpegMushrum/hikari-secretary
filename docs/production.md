@@ -5,6 +5,29 @@
 Выпуск сертификата Let's Encrypt через DNS, настройка DNS и запуск на сервере
 выполняются отдельно. Этот документ не означает, что сервер уже обновлён.
 
+## Обновление Backend 0.3.1 и Miniapp 0.1.1 на действующем стенде
+
+Этот порядок подходит для перехода с Backend 0.3.0 и Miniapp 0.1.0, когда
+production уже работает с PostgreSQL. Обновление меняет административный
+API и интерфейс. Схема БД и набор переменных окружения прежние.
+
+После публикации обновления перейдите в корень серверного репозитория
+на ветке `main`. Получите зафиксированные в ней версии обоих компонентов,
+соберите образы и дождитесь готовности backend перед запуском новой miniapp.
+
+```sh
+git pull --ff-only
+git submodule update --init --recursive
+docker compose -f docker-compose.production.yml build backend miniapp
+docker compose -f docker-compose.production.yml up -d --no-deps --wait backend
+docker compose -f docker-compose.production.yml up -d --no-deps --force-recreate miniapp
+```
+
+`--no-deps` позволяет использовать работающую PostgreSQL и пропустить
+одноразовые сервисы первоначального переноса. Для проверки откройте «Отзывы»
+в Telegram под администратором, найдите отзыв по известному ID и проверьте,
+что фильтр из карточки участника показывает отзывы именно этого человека.
+
 ## Сеть и HTTPS
 
 - Публичный `8443` направляется в HTTPS nginx; `880` перенаправляет на
