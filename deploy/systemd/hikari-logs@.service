@@ -1,0 +1,18 @@
+[Unit]
+Description=Archive Hikari container logs to S3
+After=network-online.target systemd-journald.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+SupplementaryGroups=systemd-journal
+WorkingDirectory=/etc/hikari-archive/project
+EnvironmentFile=/etc/hikari-archive/settings
+StateDirectory=hikari-archive-logs-%i
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 deploy/archive_logs.py
+UMask=0077
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10

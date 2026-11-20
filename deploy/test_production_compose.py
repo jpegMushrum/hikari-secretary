@@ -95,6 +95,13 @@ nginx -t
         self.assertEqual({int(p['published']) for p in web['ports']}, {880, 8443})
         self.assertEqual(services['bot']['environment']['MINIAPP_URL'], 'https://hikari.jpegmushrum.ru:8443')
 
+    def test_journal_tags_are_scoped_to_the_production_project(self):
+        for project in ('hikari-secretary', 'isolated-restore'):
+            config = self.compose_config('docker-compose.production.yml', '--profile', 'legacy-import',
+                                         settings={'COMPOSE_PROJECT_NAME': project, 'HIKARI_LOG_DRIVER': 'journald'})
+            for name, service in config['services'].items():
+                self.assertEqual(service['logging'], {'driver': 'journald', 'options': {'tag': f'{project}/{name}'}})
+
     def test_legacy_import_is_opt_in_and_defaults_to_dry_run(self):
         services = self.production_services('--profile', 'legacy-import')
         importer = services['backend-import']

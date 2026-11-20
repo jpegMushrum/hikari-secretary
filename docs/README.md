@@ -13,6 +13,7 @@
 | [План Mini App и roadmap](miniapp-plan.md) | Стек и стиль, текущая админская панель, ближайшие задачи, пользовательский режим и идеи |
 | [Запуск браузерной Mini App](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | localhost:5173, изолированный dev compose, архитектура frontend, тесты и текущие границы |
 | [Production и переход с SQLite](production.md) | Compose, настраиваемые порты HTTPS и HTTP, админские кнопки, снимок и импорт, порядок запуска и откат |
+| [Архивирование production в S3](s3-archive.md) | Настройка таймеров на VPS, резервные копии PostgreSQL и медиа, выгрузка журналов, проверка восстановления |
 | [Модель данных и перенос](domain-model.md) | Данные PostgreSQL, файлы медиа и состав ручного импорта из SQLite |
 | [Документация бота](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/README.md) | Настройка, эксплуатация, сценарии и архитектура текущего Python-бота |
 

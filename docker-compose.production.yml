@@ -1,7 +1,12 @@
 # Production stack. GitHub deployments set image digests in the root .env.
 name: hikari-secretary
+x-log-driver: &log-driver ${HIKARI_LOG_DRIVER:-json-file}
 services:
   database:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/database
     image: postgres:18-alpine
     restart: unless-stopped
     env_file:
@@ -16,6 +21,10 @@ services:
       timeout: 5s
       retries: 10
   backend-migrate:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/backend-migrate
     image: ${BACKEND_IMAGE:-hikari-secretary-backend:local}
     env_file:
     - ${BACKEND_ENV_FILE:-./backend/.env}
@@ -26,6 +35,10 @@ services:
         condition: service_healthy
     restart: 'no'
   backend-import:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/backend-import
     profiles: [legacy-import]
     image: hikari-secretary-import-legacy:local
     build:
@@ -45,6 +58,10 @@ services:
         condition: service_completed_successfully
     restart: 'no'
   backend:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/backend
     image: ${BACKEND_IMAGE:-hikari-secretary-backend:local}
     build:
       context: ./backend
@@ -81,6 +98,10 @@ services:
       retries: 5
     restart: unless-stopped
   bot:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/bot
     image: ${BOT_IMAGE:-hikari-secretary-bot}
     build:
       context: ./bot
@@ -98,6 +119,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
   legacy-snapshot:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/legacy-snapshot
     profiles: [legacy-import]
     image: python:3.12-slim
     entrypoint:
@@ -111,6 +136,10 @@ services:
     - legacy_snapshot:/snapshot
     restart: 'no'
   miniapp:
+    logging:
+      driver: *log-driver
+      options:
+        tag: ${COMPOSE_PROJECT_NAME}/miniapp
     image: ${MINIAPP_IMAGE:-hikari-secretary-miniapp}
     build: ./miniapp
     healthcheck:

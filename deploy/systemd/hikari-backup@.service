@@ -1,0 +1,18 @@
+[Unit]
+Description=Archive Hikari PostgreSQL and media to S3
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/etc/hikari-archive/project
+EnvironmentFile=/etc/hikari-archive/settings
+ExecStart=/bin/bash deploy/archive-backup.sh
+UMask=0077
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -1,0 +1,190 @@
+# Резервные копии и журналы production в S3
+
+На Linux VPS два таймера systemd работают независимо. По воскресеньям
+в 03:00 UTC один комплект объединяет логический дамп PostgreSQL 18 и
+каталоги медиа. Каждые 15 минут отдельная задача выгружает записи
+контейнеров production из journald. Обе задачи обращаются к закрытому
+S3-совместимому бакету вне VPS.
+
+## Настройка хранилища
+
+Создайте закрытый бакет с отдельным префиксом для этого стенда. Пример
+настройки — [deploy/archive.env.example](../deploy/archive.env.example).
+Задайте `HIKARI_S3_URI=s3://bucket/hikari-production` с вашим бакетом и
+непустым префиксом без завершающего слеша. В сегментах префикса
+используйте латинские буквы, цифры, дефис или подчёркивание. Укажите
+HTTPS-адрес S3-совместимого провайдера в `AWS_ENDPOINT_URL`, его регион в
+`AWS_DEFAULT_REGION`, а ключ и секрет — в `AWS_ACCESS_KEY_ID` и
+`AWS_SECRET_ACCESS_KEY` соответственно. Для Amazon S3 с ролью IAM
+можно оставить endpoint и статические ключи незаданными.
+
+Ограничьте права сервисного ключа этим бакетом и выбранным префиксом.
+Нужно разрешить список объектов в `backups/`, запись и удаление объектов
+в `backups/` и `staging/`, чтение из `staging/` для проверки и
+копирования, запись в `logs/` и отмену незавершённой multipart-загрузки
+в используемых префиксах. Доступ на чтение готовых архивов и журналов
+можно выдать отдельному ключу администратора.
+
+Установите правило lifecycle только для `logs/` с удалением объектов
+через 30 дней. Для `staging/` задайте короткий срок, например 7 дней,
+чтобы убрать объекты, оставшиеся после аварийной остановки. Включите
+очистку незавершённых multipart-загрузок. Успешные комплекты в
+`backups/` ротирует скрипт. При включённом версионировании видимое
+удаление скрывает прежнюю версию объекта. Задайте отдельно срок
+удаления noncurrent-версий и очистку истёкших delete markers в этих
+префиксах, чтобы ограничить расход места.
+
+## Подготовка VPS
+
+Нужны Linux с systemd, AWS CLI v2 в системном `PATH`, системная служба
+Docker Engine (`docker.service`), Compose v2 и Python 3. Сборщик читает
+только теги проекта `hikari-secretary` от этой службы. Пример предполагает checkout
+`/srv/hikari-secretary` и существующего пользователя `deploy` с
+доступом к этому checkout и Docker. Подставьте свои значения.
+
+```sh
+cd /srv/hikari-secretary
+aws --version
+sudo -u deploy docker info >/dev/null
+sudo install -d -m 0755 /etc/hikari-archive
+sudo ln -s /srv/hikari-secretary /etc/hikari-archive/project
+sudo install -o root -g root -m 0600 deploy/archive.env.example /etc/hikari-archive/settings
+sudoedit /etc/hikari-archive/settings
+```
+
+При повторной настройке сохраните существующий файл `settings` с ключами
+и проверьте, куда ведёт `project`. Файл читает системный менеджер systemd,
+а команды запускаются от имени пользователя развёртывания.
+
+В **корневом** `.env` checkout задайте `HIKARI_LOG_DRIVER=journald`
+и примените конфигурацию при обычном обновлении production. Смена
+драйвера логирования требует пересоздания контейнеров. Если нужны
+старые логи файлового драйвера, сохраните их перед пересозданием.
+
+Настройте постоянный журнал на VPS. Например, задайте
+`Storage=persistent` в секции `[Journal]` файла
+`/etc/systemd/journald.conf.d/hikari.conf`. Подберите `SystemMaxUse` и
+срок хранения под свободное место и ожидаемую длительность перебоев S3.
+После изменения перечитайте настройки и сбросьте накопленный журнал на
+диск:
+
+```sh
+sudo systemctl restart systemd-journald
+sudo journalctl --flush
+sudo journalctl --disk-usage
+```
+
+Установка systemd-юнитов и пример проверки с пользователем `deploy`:
+
+```sh
+sudo install -m 0644 deploy/systemd/hikari-{backup,logs}@.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start hikari-backup@deploy.service
+sudo systemctl start hikari-logs@deploy.service
+sudo journalctl -u hikari-backup@deploy.service -u hikari-logs@deploy.service -n 100
+sudo journalctl _SYSTEMD_UNIT=docker.service CONTAINER_TAG=hikari-secretary/backend -n 10
+```
+
+После ручной проверки включите таймеры:
+
+```sh
+sudo systemctl enable --now hikari-backup@deploy.timer hikari-logs@deploy.timer
+systemctl list-timers 'hikari-*'
+```
+
+Сервис журналов получает группу `systemd-journal` через unit. Доступ к
+Docker нужен сервису копирования, чтобы выполнить команды в контейнерах
+PostgreSQL, бота и backend. При ошибке проверьте состояние юнитов и записи
+`journalctl`. Для backup проверьте доступ к Docker и наличие места во
+временном каталоге (по умолчанию `/var/tmp`, нужно около двух размеров
+комплекта), для logs — наличие Docker-записей в постоянном журнале и
+права на запись в каталог состояния `/var/lib/hikari-archive-logs-deploy`.
+При ошибке S3 проверьте HTTPS endpoint, регион, права ключа и доступность
+хранилища. При смене назначения архивов подготовьте отдельный каталог
+состояния в настройке юнита, чтобы использовать курсор для нужного бакета
+и префикса.
+
+## Что сохраняется
+
+- `backups/YYYYMMDDTHHMMSSZ-UUID.tar` содержит `database.dump` в
+  custom-формате `pg_dump`, `bot-media.tar` и `admin-media.tar`.
+  Вложенные tar содержат файлы относительно настроенных `MEDIA_DIR` и
+  `ADMIN_MEDIA_DIR` (обычно `media` и `admin-media` под `BOT_DATA_DIR`).
+  Скрипт проверяет, что PostgreSQL читает список объектов дампа, затем
+  сверяет SHA-256 загруженного в `staging/` комплекта перед копированием
+  в `backups/`. Ротация после успешной загрузки оставляет последнюю
+  проверенную копию за каждую из трёх последних недель с копиями по
+  календарю ISO в UTC. Пропуск недели сохраняет прежние комплекты.
+- `logs/YYYY/MM/DD/HHMMSS-<хеш курсора>.jsonl.gz` содержит записи
+  stdout и stderr контейнеров этого Compose-проекта в формате JSON
+  journald, по одной на строку. Дата ключа соответствует последней записи
+  пакета в UTC. Первый запуск читает накопленные подходящие записи, а
+  последующие продолжают с сохранённого курсора. Готовый пакет хранится
+  на диске до успешной отправки; повторная попытка использует тот же
+  ключ. После простоя попадут в S3 записи, ещё доступные в journald, и
+  сохранённый пакет. Уже вытесненные из journald записи восстановить
+  через таймер нельзя.
+
+PostgreSQL и файлы копируются во время работы приложений. Дамп
+транзакционно согласован внутри одной базы, а медиа читаются отдельно.
+После восстановления проверьте вложения недавних публикаций. Последние
+изменения после выбранной копии придётся восстанавливать отдельно.
+Сохраните конфигурацию развёртывания, TLS, версии образов, PostgreSQL-роли,
+секреты и старые SQLite-снимки отдельно.
+
+После выключения VPS systemd запускает пропущенную задачу при следующей
+активации таймера. Backup сохраняет состояние на момент фактического
+запуска. Если задача завершилась ошибкой, повторите её вручную после
+устранения причины или дождитесь следующего запуска по расписанию.
+
+## Восстановление на отдельном стенде
+
+Используйте отдельный каталог, пустую PostgreSQL 18 и тестовую
+конфигурацию. Оставьте Telegram-бот выключенным. Выберите из
+`backups/` комплект, скачайте его с учётными данными оператора с
+доступом на чтение и распакуйте в новый приватный каталог. Пример для
+стандартных каталогов медиа:
+
+```sh
+umask 077
+restore_dir=$(mktemp -d)
+cd "$restore_dir"
+aws s3 cp 's3://bucket/hikari-production/backups/REPLACE_WITH_KEY.tar' bundle.tar
+tar -tf bundle.tar
+tar -xf bundle.tar database.dump bot-media.tar admin-media.tar
+mkdir -p data/media data/admin-media
+tar -xf bot-media.tar -C data/media
+tar -xf admin-media.tar -C data/admin-media
+```
+
+Запустите отдельный временный контейнер PostgreSQL без открытых портов
+и проверьте импорт. Имя контейнера должно быть свободно.
+
+```sh
+docker run -d --name hikari-restore-check --network none \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=hikari_restore postgres:18-alpine
+docker logs --tail 30 hikari-restore-check
+```
+
+Перед импортом дождитесь финального запуска PostgreSQL после инициализации.
+
+```sh
+docker exec -i hikari-restore-check pg_restore --exit-on-error --single-transaction \
+  --no-owner --no-privileges -U postgres -d hikari_restore < database.dump
+docker exec hikari-restore-check psql -U postgres -d hikari_restore -c '\dt'
+```
+
+Для проверки приложением подготовьте изолированный стек с версиями
+на дату выбранной копии, отдельным именем проекта, пустым volume
+PostgreSQL и временными учётными данными. Запустите только его
+`database`, выполните тот же `pg_restore` через
+`docker compose exec -T database` с именем роли и базы этого стенда,
+задайте `BOT_DATA_DIR` на распакованный каталог `data/` и восстановите
+настроенные пути и права доступа к медиа. Затем запустите backend и
+miniapp. Проверьте, что открывается сохранённая публикация с вложением.
+На тестовом стенде не запускайте доставку с production-токеном.
+
+Проверку на живом S3 и контрольное восстановление выполните после
+настройки VPS. Для проверки журнала просмотрите скачанный пакет через
+`gzip -dc` и сопоставьте время и тег с записью того же контейнера из
+`journalctl`. Храните скачанные файлы в каталоге с ограниченным доступом.
