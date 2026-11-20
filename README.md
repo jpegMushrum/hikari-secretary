@@ -73,16 +73,14 @@ docker compose -f docker-compose.bot-local.yml up -d --build
 
 # Только браузерная панель с локальным API
 docker compose -f docker-compose.bot-local.yml up -d --build miniapp
-
-# Production
-docker compose -f docker-compose.production.yml up -d --build
 ```
 
 Это два самостоятельных стека. Локальный открывает miniapp на
 `localhost:5173`; production использует HTTPS с настраиваемыми портами.
-Обычный production-запуск применяет миграции PostgreSQL. Для первого
-переноса SQLite отдельно запустите сервисы профиля `legacy-import`
-до запуска приложения.
+Production обновляется по ручному запуску GitHub Actions из `main`
+после настройки окружения `production`. Сервер загружает готовые образы из GHCR
+по digest и применяет миграции PostgreSQL. Для первого переноса SQLite
+отдельно запустите сервисы профиля `legacy-import` до запуска приложения.
 
 Перед первым запуском: [локальное окружение](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) или
 [production, сертификат и перенос SQLite → PostgreSQL](docs/production.md).

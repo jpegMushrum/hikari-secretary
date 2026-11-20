@@ -66,14 +66,23 @@ nginx -t
         self.assertIn('cannot load certificate', result.stderr)
         self.assertIn('/etc/hikari/tls/fullchain.pem', result.stderr)
 
-    def production_services(self, *profile_options):
+    def production_services(self, *profile_options, settings=None):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run([
             'docker', 'compose', '--env-file', '.env.example',
             '-f', 'docker-compose.production.yml', *profile_options,
             'config', '--no-env-resolution', '--format', 'json',
-        ], cwd=root, check=True, capture_output=True, text=True)
+        ], cwd=root, check=True, capture_output=True, text=True,
+           env={**os.environ, **(settings or {})})
         return json.loads(result.stdout)['services']
+
+    def test_production_uses_the_release_images_for_all_application_services(self):
+        refs = {name: f"ghcr.io/example/hikari-secretary-{name}@sha256:{'a' * 64}"
+                for name in ('backend', 'bot', 'miniapp')}
+        services = self.production_services(settings={f'{k.upper()}_IMAGE': v for k, v in refs.items()})
+        for name, ref in refs.items():
+            self.assertEqual(services[name]['image'], ref)
+        self.assertEqual(services['backend-migrate']['image'], refs['backend'])
 
     def test_production_contract(self):
         services = self.production_services()

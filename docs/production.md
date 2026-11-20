@@ -1,29 +1,144 @@
 # Подготовка production и переход с SQLite
 
-Рабочий стек использует PostgreSQL. Для обычного обновления достаточно
-получить версии компонентов и пересобрать стек. Инструкция по переносу
-ниже нужна только при первом переходе со старого SQLite-бота.
+Рабочий стек использует PostgreSQL. Обычное обновление запускается вручную
+в GitHub Actions. Инструкция по переносу ниже нужна только при первом
+переходе со старого SQLite-бота.
+
+## Подготовка GitHub Actions и VPS
+
+Workflow **Platform checks** запускается вручную в GitHub Actions или
+в составе **Deploy production**. Он проверяет версии `bot`, `backend` и `miniapp`,
+зафиксированные в проверяемом коммите. Доступ к репозиториям сабмодулей
+на GitHub должен быть публичным. Перед изменением ссылок в корне
+опубликуйте коммиты в репозиториях компонентов.
+
+На VPS нужен существующий рабочий checkout корневого репозитория на `main`
+без локальных правок отслеживаемых файлов, включая сабмодули. Пользователю
+развёртывания нужны права записи в каталог и корневой `.env`, доступ к
+`origin` и сабмодулям, а также рабочие Git,
+Bash, Python 3, `flock`, Docker Engine и Docker Compose v2. Сохраните рабочие
+`.env`, `backend/.env`, `targets.json`, сертификат, данные и имя
+Compose-проекта. Образы выпускаются для Linux amd64.
+
+### SSH-ключ и доступ к VPS
+
+На компьютере администратора откройте Git Bash. В примерах замените
+`deploy`, `vps.example.org`, `22` и путь checkout значениями вашего стенда.
+Создайте отдельный ключ для GitHub Actions с пустой парольной фразой
+и установите его публичную часть через существующий рабочий SSH-доступ.
+
+```sh
+ssh-keygen -t ed25519 -C "hikari-github-actions" -f ~/.ssh/hikari-production -N ''
+ssh -p 22 deploy@vps.example.org \
+  'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys' \
+  < ~/.ssh/hikari-production.pub
+```
+
+В доверенной консоли VPS, например в панели хостинга, получите строку
+`known_hosts` из публичного ключа SSH-сервера. Для порта `22` используйте
+в команде имя или IP из `DEPLOY_HOST`. Для другого порта укажите
+`[vps.example.org]:2222` с вашим именем и портом.
+
+```sh
+sudo awk -v host='vps.example.org' '{print host, $1, $2}' /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+Скопируйте строку в локальный файл `~/.ssh/hikari-production-known-hosts`.
+Проверьте ключ и доступ к checkout из Git Bash. Команда проверяет ветку,
+выводит состояние рабочей копии и проверяет доступ к Docker.
+
+```sh
+ssh -p 22 -i ~/.ssh/hikari-production -o IdentitiesOnly=yes -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/hikari-production-known-hosts" \
+  deploy@vps.example.org \
+  'cd /srv/hikari-secretary && test "$(git branch --show-current)" = main &&
+   git status --short && test -w .env && docker info >/dev/null && docker compose version'
+```
+
+На VPS под тем же пользователем проверьте неинтерактивный доступ к GitHub.
+Команда `git submodule status --recursive` должна показать все ожидаемые
+сабмодули без префиксов `-`, `+` и `U`.
+
+```sh
+cd /srv/hikari-secretary
+git submodule status --recursive
+GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git ls-remote origin HEAD
+GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+  git submodule foreach --recursive 'git ls-remote origin HEAD'
+```
+
+### Окружение GitHub и доступ к GHCR
+
+В GitHub откройте **Settings → Environments** и создайте окружение
+`production`. В **Deployment branches and tags** выберите
+**Selected branches and tags** и добавьте правило типа **Branch** со
+значением `main`. Храните SSH-секреты только в **Environment secrets**
+этого окружения, а переменные задайте в **Environment variables**.
+[Настройка окружений в GitHub](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+
+| Тип | Имя | Значение |
+| --- | --- | --- |
+| Secret | `DEPLOY_SSH_KEY` | Всё содержимое закрытого ключа `~/.ssh/hikari-production`. |
+| Secret | `DEPLOY_KNOWN_HOSTS` | Содержимое `~/.ssh/hikari-production-known-hosts`. |
+| Variable | `DEPLOY_HOST` | DNS-имя или IP VPS. |
+| Variable | `DEPLOY_USER` | Пользователь SSH с доступом к checkout и Docker. |
+| Variable | `DEPLOY_PATH` | Абсолютный путь к корневому репозиторию на VPS. |
+| Variable | `DEPLOY_PORT` | SSH-порт, по умолчанию `22`. |
+
+Для приватных пакетов GHCR войдите на VPS как пользователь развёртывания.
+При запросе пароля введите GitHub personal access token (classic)
+с разрешением `read:packages` от аккаунта с доступом на чтение всех трёх
+пакетов. Docker должен использовать эти учётные данные при развёртывании.
+Для публичных пакетов этот шаг можно пропустить.
+[Доступ к Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+
+```sh
+docker login ghcr.io --username YOUR_GITHUB_USER
+```
+
+### Проверочный запуск
+
+После публикации файлов workflow в `main` запустите **Actions →
+Platform checks → Run workflow** для ветки `main`. Чтобы проверить
+также сборку и публикацию образов, запустите **Deploy production** для
+`main` с включённым параметром `publish_only`. Этот режим публикует
+образы и пропускает подключение к VPS. Возьмите ссылки на образы по digest
+из сводки запуска. Для проверки доступа к GHCR скачайте подготовленные
+образы на VPS от имени пользователя развёртывания. Подставьте полные
+ссылки из сводки вместо примеров ниже.
+
+```sh
+docker pull 'ghcr.io/OWNER/hikari-secretary-backend@sha256:BACKEND_DIGEST'
+docker pull 'ghcr.io/OWNER/hikari-secretary-bot@sha256:BOT_DIGEST'
+docker pull 'ghcr.io/OWNER/hikari-secretary-miniapp@sha256:MINIAPP_DIGEST'
+```
 
 ## Обновление действующего стенда
 
 Этот порядок подходит для production, уже работающего с PostgreSQL.
 
-После публикации обновления перейдите в корень серверного репозитория
-на ветке `main`. Получите зафиксированные в ней версии компонентов и
-запустите обычный стек:
+В GitHub Actions выберите **Deploy production → Run workflow**, укажите
+ветку `main`, оставьте `publish_only` выключенным и запустите workflow.
+Он выполняет интеграционные проверки,
+собирает образы и публикует их в GHCR как
+`ghcr.io/<owner>/hikari-secretary-backend`,
+`ghcr.io/<owner>/hikari-secretary-bot` и
+`ghcr.io/<owner>/hikari-secretary-miniapp` с тегами по SHA коммита.
+На VPS workflow по SSH передаёт commit платформы и ссылки на образы по
+digest. Compose загружает готовые образы и ждёт готовности PostgreSQL и
+успешного применения миграций перед запуском backend. Затем проверяется
+готовность backend и miniapp, а также состояние контейнера бота. Серверный скрипт
+сохраняет ссылки в `BACKEND_IMAGE`, `BOT_IMAGE` и `MINIAPP_IMAGE`
+в корневом `.env`. При сбое смотрите вывод workflow и состояние контейнеров
+на VPS через `docker compose -f docker-compose.production.yml ps -a`
+и `docker compose -f docker-compose.production.yml logs --tail=100`.
+Восстановление после сбоя выполняется вручную с учётом уже применённых
+миграций.
 
-```sh
-git pull --ff-only
-git submodule update --init --recursive
-docker compose -f docker-compose.production.yml up -d --build
-docker compose -f docker-compose.production.yml ps
-```
-
-Compose ждёт готовности PostgreSQL и успешного применения миграций перед
-запуском backend. Снимок и импорт запускаются отдельно в профиле
-`legacy-import`. Для проверки откройте «Отзывы»
-в Telegram под администратором, найдите отзыв по известному ID и проверьте,
-что фильтр из карточки участника показывает отзывы именно этого человека.
+Снимок и импорт запускаются отдельно в профиле `legacy-import`. После
+развёртывания откройте «Отзывы» в Telegram под администратором, найдите
+отзыв по известному ID и проверьте, что фильтр из карточки участника
+показывает отзывы именно этого человека.
 
 ## Сеть и HTTPS
 
@@ -104,9 +219,9 @@ Production Compose сам задаёт `MINIAPP_URL` с доменом и пор
 
 ## Переход с серверной ветки main и SQLite
 
-Подготовку образов можно сделать заранее; фактический переход требует
-короткой остановки старого бота. Не запускайте два polling-процесса с одним
-токеном. Нельзя импортировать локальную демонстрационную БД вместо серверной.
+Фактический переход требует короткой остановки старого бота.
+Не запускайте два polling-процесса с одним токеном. Нельзя импортировать
+локальную демонстрационную БД вместо серверной.
 
 1. Зафиксировать текущий commit main и версии сабмодулей. Сохранить отдельно
    рабочие `.env`, `targets.json`, весь каталог данных и медиа. Проверить
@@ -117,11 +232,19 @@ Production Compose сам задаёт `MINIAPP_URL` с доменом и пор
 3. Обновить код и сабмодули, сохранить серверные конфиги. Проверить, что
    целевой volume PostgreSQL предназначен для этого перехода и не содержит
    тестовой БД или ранее установленного маркера импорта. Volume не удалять.
-4. После подключения сертификата проверить конфигурацию и собрать образы:
+4. После подключения сертификата проверить конфигурацию. Для первого
+   переноса можно собрать приложения из checkout выбранного релиза,
+   оставив `BACKEND_IMAGE`, `BOT_IMAGE` и `MINIAPP_IMAGE` незаданными.
+   На VPS с ограниченной памятью запустите **Deploy production** на
+   `main` с флагом `publish_only`. После тестов и сборки GitHub покажет
+   три ссылки по digest в сводке запуска. Укажите их в корневом `.env`
+   на VPS с тем же коммитом и замените команду
+   `build backend bot miniapp` на `pull backend bot miniapp`.
+   Отдельно соберите импортёр:
 
 ```sh
 docker compose -f docker-compose.production.yml config --quiet
-docker compose -f docker-compose.production.yml build backend
+docker compose -f docker-compose.production.yml build backend bot miniapp
 docker compose -f docker-compose.production.yml --profile legacy-import build backend-import
 ```
 
@@ -172,7 +295,7 @@ SQLite и журналы `-wal`/`-journal` копируются
    Затем запустить стек:
 
 ```sh
-docker compose -f docker-compose.production.yml up -d --build
+docker compose -f docker-compose.production.yml up -d --no-build backend bot miniapp
 docker compose -f docker-compose.production.yml ps
 docker compose -f docker-compose.production.yml logs --tail=100 backend-migrate backend bot miniapp
 ```
@@ -223,10 +346,10 @@ python -m unittest discover -s deploy
 только в WAL. Volume снимка и исходную базу удалять не нужно.
 
 
-Мигратор читает только `DATABASE_URL`; токены Telegram/ИИ и `targets.json`
-ему не нужны. Если старый образ завершился с `invalid configuration: read
- targets`, обновите backend и выполните `docker compose -f
- docker-compose.production.yml build backend`, затем повторите
-`run --rm backend-migrate`. Успешный dry-run SQLite не означает, что миграции
+Мигратор читает только `DATABASE_URL`. Если старый образ завершился с
+`invalid configuration: read targets`, проверьте `BACKEND_IMAGE` и загрузите
+подготовленную версию через `docker compose -f docker-compose.production.yml
+pull backend-migrate`, затем повторите `run --rm backend-migrate`.
+Успешный dry-run SQLite не означает, что миграции
 PostgreSQL применены: импорт с записью выполняется только после успешного
 завершения мигратора.

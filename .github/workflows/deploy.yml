@@ -1,0 +1,104 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_only:
+        description: 'Только собрать и опубликовать образы (без подключения к VPS)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/checks.yml
+
+  images:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend: ${{ steps.publish.outputs.backend }}
+      bot: ${{ steps.publish.outputs.bot }}
+      miniapp: ${{ steps.publish.outputs.miniapp }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Sign in to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish release images
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          for component in backend bot miniapp; do
+            image="ghcr.io/${GITHUB_REPOSITORY,,}-$component"
+            metadata="$RUNNER_TEMP/$component-metadata.json"
+            docker buildx build --platform linux/amd64 \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --metadata-file "$metadata" --push --tag "$image:$GITHUB_SHA" "$component"
+            digest=$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' "$metadata")
+            printf '%s=%s@%s\n' "$component" "$image" "$digest" >> "$GITHUB_OUTPUT"
+            printf -- '- %s@%s\n' "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  deploy:
+    if: ${{ !inputs.publish_only }}
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install verified release on the server
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          BACKEND_IMAGE: ${{ needs.images.outputs.backend }}
+          BOT_IMAGE: ${{ needs.images.outputs.bot }}
+          MINIAPP_IMAGE: ${{ needs.images.outputs.miniapp }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?}" "${DEPLOY_KNOWN_HOSTS:?}" "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}"
+          [[ $DEPLOY_USER =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ && $DEPLOY_HOST != -* ]]
+          [[ $DEPLOY_PORT =~ ^[0-9]{1,5}$ ]] && (( 10#$DEPLOY_PORT > 0 && 10#$DEPLOY_PORT < 65536 )) || exit 1
+          remote_command=$(python3 - <<'PY'
+          import os, shlex
+          path = os.environ["DEPLOY_PATH"]
+          if not path.startswith("/"):
+              raise SystemExit("DEPLOY_PATH must be absolute")
+          args = [os.environ[key] for key in ("GITHUB_SHA", "BACKEND_IMAGE", "BOT_IMAGE", "MINIAPP_IMAGE")]
+          print("cd " + shlex.quote(path) + " && exec bash -s -- " + shlex.join(args))
+          PY
+          )
+          umask 077
+          ssh_dir=$(mktemp -d "$RUNNER_TEMP/deploy-ssh.XXXXXX")
+          trap 'rm -f "$ssh_dir/key" "$ssh_dir/known_hosts"; rmdir "$ssh_dir"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$ssh_dir/known_hosts" -o ConnectTimeout=15 \
+            -i "$ssh_dir/key" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "$remote_command" < deploy/production-release.sh

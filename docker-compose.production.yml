@@ -1,4 +1,4 @@
-# Standalone stack; run with docker compose -f docker-compose.production.yml up -d --build
+# Production stack. GitHub deployments set image digests in the root .env.
 name: hikari-secretary
 services:
   database:
@@ -16,7 +16,7 @@ services:
       timeout: 5s
       retries: 10
   backend-migrate:
-    image: hikari-secretary-backend:local
+    image: ${BACKEND_IMAGE:-hikari-secretary-backend:local}
     env_file:
     - ${BACKEND_ENV_FILE:-./backend/.env}
     entrypoint:
@@ -45,7 +45,7 @@ services:
         condition: service_completed_successfully
     restart: 'no'
   backend:
-    image: hikari-secretary-backend:local
+    image: ${BACKEND_IMAGE:-hikari-secretary-backend:local}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -81,6 +81,7 @@ services:
       retries: 5
     restart: unless-stopped
   bot:
+    image: ${BOT_IMAGE:-hikari-secretary-bot}
     build:
       context: ./bot
       dockerfile: Dockerfile
@@ -110,7 +111,13 @@ services:
     - legacy_snapshot:/snapshot
     restart: 'no'
   miniapp:
+    image: ${MINIAPP_IMAGE:-hikari-secretary-miniapp}
     build: ./miniapp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     environment:
       MINIAPP_DOMAIN: ${MINIAPP_DOMAIN:-hikari.jpegmushrum.ru}
       MINIAPP_HTTPS_PORT: ${MINIAPP_HTTPS_PORT:-8443}
