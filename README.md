@@ -2,8 +2,8 @@
 
 ![Статус: работает](https://img.shields.io/badge/status-running-2EA44F)
 [![Bot: последний описанный релиз 0.9.0](https://img.shields.io/badge/bot-0.9.0-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
-[![Backend: 0.3.2](https://img.shields.io/badge/backend-0.3.2-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
-[![Miniapp: 0.1.2](https://img.shields.io/badge/miniapp-0.1.2-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
+[![Backend: 0.3.3](https://img.shields.io/badge/backend-0.3.3-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
+[![Miniapp: 0.1.3](https://img.shields.io/badge/miniapp-0.1.3-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
@@ -32,7 +32,8 @@
 - Публикации в каналы, чаты и топики: текст, фотографии, альбомы и rich messages.
 - Черновики из сообщений боту, предпросмотр и настройка публикации в miniapp.
 - Отложенные отправки, отзывы и настраиваемые таблицы.
-- ИИ-материалы для разговорного клуба при подключённом сервисе генерации.
+- ИИ-материалы для разговорного клуба при подключённом сервисе генерации,
+  история заданий с предпросмотром и статусом публикации в miniapp.
 
 Miniapp пока доступен только администраторам. Управление через бота
 сохраняется: сообщение готовится в Telegram, дальнейшую настройку можно
@@ -52,16 +53,16 @@ SQLite используется только для ручного перено�
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
 | [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` | Telegram-интерфейс и доставка сообщений |
-| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.2` | Бизнес-логика, API, авторизация и PostgreSQL |
-| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.2` | Административная панель на React и TypeScript |
+| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.3` | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.3` | Административная панель на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
 пока не назначена. Релизы backend, miniapp и изменения интеграции описаны
 в [общей истории платформы](CHANGELOG.md).
 
-В этот релиз входят **Backend 0.3.2** и **Miniapp 0.1.2**.
-Обновляйте их вместе, чтобы сортировка по любой колонке работала для всего
-отфильтрованного списка.
+В релиз от 20 ноября 2026 года входят **Backend 0.3.3** и **Miniapp 0.1.3**.
+Обновляйте их вместе, чтобы в истории ИИ были доступны карточки материалов
+и сортировка по статусу публикации.
 
 ## Запуск
 
