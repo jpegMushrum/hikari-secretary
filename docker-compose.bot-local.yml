@@ -39,6 +39,17 @@ services:
     build: ./backend
     environment:
       APP_ENV: development
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-90}
+      AI_TOPIC_TARGET_KEY: ${AI_TOPIC_TARGET_KEY:-}
+      AI_TOPIC_AUTO_PUBLISH_TIME: ${AI_TOPIC_AUTO_PUBLISH_TIME:-}
+      AI_TOPIC_QUESTION_COUNT: ${AI_TOPIC_QUESTION_COUNT:-5}
+      AI_TOPIC_VOCABULARY_COUNT: ${AI_TOPIC_VOCABULARY_COUNT:-10}
+      AI_TOPIC_GRAMMAR_COUNT: ${AI_TOPIC_GRAMMAR_COUNT:-3}
+      AI_TOPIC_MAX_ATTEMPTS: ${AI_TOPIC_MAX_ATTEMPTS:-5}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
       DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/${LOCAL_DATABASE_NAME:-hikari_bot_local_20261117}?sslmode=disable
       TELEGRAM_BOT_TOKEN: local-miniapp-only-not-a-telegram-token
       ADMIN_TELEGRAM_IDS: '123456789'
@@ -94,8 +105,6 @@ services:
       TARGETS_PATH: /app/targets.json
       MINIAPP_URL: ''
       BOT_BACKGROUND_WORKERS_ENABLED: 'true'
-      AI_TOPIC_AUTO_PUBLISH_TIME: ''
-      AI_TOPIC_TARGET_KEY: ''
     volumes:
     - ./targets.json:/app/targets.json:ro
     - ./data/media:/app/data/media

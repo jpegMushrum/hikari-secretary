@@ -1,11 +1,32 @@
 """Read-only validation of the standalone Compose stacks (requires Docker Compose)."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
 
 
 class ProductionComposeTests(unittest.TestCase):
+    def test_local_ai_uses_configured_provider_target_and_schedule(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = {
+            'DEEPSEEK_API_KEY': 'local-test-key',
+            'DEEPSEEK_MODEL': 'local-test-model',
+            'AI_TOPIC_TARGET_KEY': 'local-test-target',
+            'AI_TOPIC_AUTO_PUBLISH_TIME': '19:45',
+            'TIMEZONE': 'UTC',
+        }
+        result = subprocess.run([
+            'docker', 'compose', '--env-file', '.env.example',
+            '-f', 'docker-compose.bot-local.yml', 'config', '--no-env-resolution', '--format', 'json',
+        ], cwd=root, env={**os.environ, **settings}, check=True, capture_output=True, text=True)
+        services = json.loads(result.stdout)['services']
+        for name, value in settings.items():
+            self.assertEqual(services['backend']['environment'].get(name), value)
+        self.assertIn(root / '.env', [Path(entry['path']) for entry in services['bot']['env_file']])
+        for name in ('AI_TOPIC_TARGET_KEY', 'AI_TOPIC_AUTO_PUBLISH_TIME'):
+            self.assertNotIn(name, services['bot']['environment'])
+
     def test_local_stack_is_standalone_and_preserves_data_locations(self):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run([

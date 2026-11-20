@@ -91,6 +91,11 @@ docker compose -f docker-compose.production.yml up -d --build
 на пустом локальном томе задайте `LOCAL_DATABASE_NAME=hikari_dev` в корневом
 `.env`. Чтобы увидеть импортированные данные, укажите имя уже восстановленной
 локальной базы. Цели тестового бота задаются в корневом `targets.json`.
+Для локальной генерации ИИ-материалов укажите в корневом `.env`
+`DEEPSEEK_API_KEY` и `AI_TOPIC_TARGET_KEY` с ключом тестовой цели из
+`targets.json`. Для ежедневной публикации задайте `AI_TOPIC_AUTO_PUBLISH_TIME`
+в формате `HH:MM` в часовом поясе `TIMEZONE`.
+[Руководство по ИИ-материалам](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/ai-materials.md).
 
 ## Документация
 
