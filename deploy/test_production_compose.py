@@ -3,12 +3,27 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 
 class ProductionComposeTests(unittest.TestCase):
-    def test_local_ai_uses_configured_provider_target_and_schedule(self):
+    def compose_config(self, filename, *options, settings=None):
         root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / '.env').write_text('BOT_ENV_TEST_MARKER=from-root-file\n')
+            (project / 'backend').mkdir()
+            (project / 'backend' / '.env').write_text('')
+            result = subprocess.run([
+                'docker', 'compose', '--project-directory', str(project),
+                '--env-file', str(root / '.env.example'), '-f', str(root / filename),
+                *options, 'config', '--format', 'json',
+            ], cwd=project, env={**os.environ, **(settings or {})}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+    def test_local_ai_uses_configured_provider_target_and_schedule(self):
         settings = {
             'DEEPSEEK_API_KEY': 'local-test-key',
             'DEEPSEEK_MODEL': 'local-test-model',
@@ -16,24 +31,16 @@ class ProductionComposeTests(unittest.TestCase):
             'AI_TOPIC_AUTO_PUBLISH_TIME': '19:45',
             'TIMEZONE': 'UTC',
         }
-        result = subprocess.run([
-            'docker', 'compose', '--env-file', '.env.example',
-            '-f', 'docker-compose.bot-local.yml', 'config', '--no-env-resolution', '--format', 'json',
-        ], cwd=root, env={**os.environ, **settings}, check=True, capture_output=True, text=True)
-        services = json.loads(result.stdout)['services']
+        services = self.compose_config('docker-compose.bot-local.yml', settings=settings)['services']
         for name, value in settings.items():
             self.assertEqual(services['backend']['environment'].get(name), value)
-        self.assertIn(root / '.env', [Path(entry['path']) for entry in services['bot']['env_file']])
+        self.assertEqual(services['bot']['environment']['BOT_ENV_TEST_MARKER'], 'from-root-file')
         for name in ('AI_TOPIC_TARGET_KEY', 'AI_TOPIC_AUTO_PUBLISH_TIME'):
             self.assertNotIn(name, services['bot']['environment'])
 
     def test_local_stack_is_standalone_and_preserves_data_locations(self):
         root = Path(__file__).resolve().parents[1]
-        result = subprocess.run([
-            'docker', 'compose', '--env-file', '.env.example',
-            '-f', 'docker-compose.bot-local.yml', 'config', '--no-env-resolution', '--format', 'json',
-        ], cwd=root, check=True, capture_output=True, text=True)
-        config = json.loads(result.stdout)
+        config = self.compose_config('docker-compose.bot-local.yml')
         self.assertEqual(config['name'], 'hikari-miniapp-dev')
         services = config['services']
         self.assertEqual(set(services), {'database', 'migrate', 'backend', 'gateway', 'miniapp', 'bot'})
@@ -67,14 +74,7 @@ nginx -t
         self.assertIn('/etc/hikari/tls/fullchain.pem', result.stderr)
 
     def production_services(self, *profile_options, settings=None):
-        root = Path(__file__).resolve().parents[1]
-        result = subprocess.run([
-            'docker', 'compose', '--env-file', '.env.example',
-            '-f', 'docker-compose.production.yml', *profile_options,
-            'config', '--no-env-resolution', '--format', 'json',
-        ], cwd=root, check=True, capture_output=True, text=True,
-           env={**os.environ, **(settings or {})})
-        return json.loads(result.stdout)['services']
+        return self.compose_config('docker-compose.production.yml', *profile_options, settings=settings)['services']
 
     def test_production_uses_the_release_images_for_all_application_services(self):
         refs = {name: f"ghcr.io/example/hikari-secretary-{name}@sha256:{'a' * 64}"
@@ -105,7 +105,8 @@ nginx -t
         self.assertEqual(importer['build']['dockerfile'], 'Dockerfile.import-legacy')
         self.assertEqual(importer['build']['context'], services['backend']['build']['context'])
         # The exec entrypoint lets a compose run override supply --apply explicitly.
-        dockerfile = Path(importer['build']['context']) / importer['build']['dockerfile']
+        self.assertEqual(Path(importer['build']['context']).name, 'backend')
+        dockerfile = Path(__file__).resolve().parents[1] / 'backend' / importer['build']['dockerfile']
         entrypoint = next(line for line in dockerfile.read_text().splitlines() if line.startswith('ENTRYPOINT '))
         self.assertEqual(json.loads(entrypoint.removeprefix('ENTRYPOINT ')), ['/app/import-legacy'])
         self.assertIsNone(importer.get('entrypoint'))
