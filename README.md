@@ -1,9 +1,9 @@
 # 光 · Hikari Secretary
 
 ![Статус: работает](https://img.shields.io/badge/status-running-2EA44F)
-[![Bot: последний описанный релиз 0.9.0](https://img.shields.io/badge/bot-0.9.0-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
-[![Backend: 0.3.4](https://img.shields.io/badge/backend-0.3.4-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
-[![Miniapp: 0.1.4](https://img.shields.io/badge/miniapp-0.1.4-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
+[![Bot: 1.0.0 в разработке](https://img.shields.io/badge/bot-1.0.0-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
+[![Backend: 0.3.5 в разработке](https://img.shields.io/badge/backend-0.3.5-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
+[![Miniapp: 0.2.0 в разработке](https://img.shields.io/badge/miniapp-0.2.0-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
@@ -23,8 +23,10 @@
 
 ## Возможности
 
-**Для участников:** регистрация на мероприятия, отмена записи, профиль,
-напоминания, подтверждение посещения и отзывы — через Telegram-бота.
+**Для участников:** в Telegram-боте кнопка «Ближайшие мероприятия» показывает,
+на какие встречи можно записаться и где уже есть запись. Из «Управления записью»
+можно изменить напоминание или отменить участие. Анкета доступна в «Моём профиле».
+Бот также принимает подтверждения посещения и отзывы.
 
 **Для организаторов:**
 
@@ -52,9 +54,9 @@ SQLite используется только для ручного перено�
 
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
-| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` | Telegram-интерфейс и доставка сообщений |
-| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.4` | Бизнес-логика, API, авторизация и PostgreSQL |
-| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.4` | Административная панель на React и TypeScript |
+| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `1.0.0` (в разработке) | Telegram-интерфейс и доставка сообщений |
+| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.5` (в разработке) | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.2.0` (в разработке) | Административная панель на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
 пока не назначена. Релизы backend, miniapp и изменения интеграции описаны
@@ -86,10 +88,12 @@ Production обновляется по ручному запуску GitHub Acti
 Перед первым запуском: [локальное окружение](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) или
 [production, сертификат и перенос SQLite → PostgreSQL](docs/production.md).
 Для production заполните корневой `.env`, `backend/.env` и `targets.json`.
-Локальный стек берёт настройки backend из Compose. Для первого запуска
-на пустом локальном томе задайте `LOCAL_DATABASE_NAME=hikari_dev` в корневом
-`.env`. Чтобы увидеть импортированные данные, укажите имя уже восстановленной
-локальной базы. Цели тестового бота задаются в корневом `targets.json`.
+Для локального стека подготовьте корневой `.env` по `.env.example` и
+`targets.json` по `targets.example.json`. Для запуска с ботом укажите
+`TELEGRAM_BOT_TOKEN` и `ADMIN_IDS` тестового бота в корневом `.env`,
+а его цели публикаций — в корневом `targets.json`. При инициализации
+тома PostgreSQL создаёт базу `hikari_dev`, а сервис `migrate` применяет
+миграции. После этого можно создавать данные через бота или miniapp.
 Для локальной генерации ИИ-материалов укажите в корневом `.env`
 `DEEPSEEK_API_KEY` и `AI_TOPIC_TARGET_KEY` с ключом тестовой цели из
 `targets.json`. Для ежедневной публикации задайте `AI_TOPIC_AUTO_PUBLISH_TIME`

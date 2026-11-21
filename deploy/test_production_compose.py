@@ -46,7 +46,8 @@ class ProductionComposeTests(unittest.TestCase):
         self.assertEqual(set(services), {'database', 'migrate', 'backend', 'gateway', 'miniapp', 'bot'})
         self.assertEqual(services['backend']['depends_on']['migrate']['condition'], 'service_completed_successfully')
         self.assertEqual(services['backend']['environment']['DATABASE_URL'], services['migrate']['environment']['DATABASE_URL'])
-        self.assertIn('/hikari_bot_local_20261117?', services['backend']['environment']['DATABASE_URL'])
+        db_name = services['database']['environment']['POSTGRES_DB']
+        self.assertIn(f'/{db_name}?', services['backend']['environment']['DATABASE_URL'])
         self.assertEqual(config['volumes']['postgres_data']['name'], 'hikari-miniapp-dev_postgres_data')
         self.assertEqual({int(p['published']) for p in services['miniapp']['ports']}, {5173})
         self.assertEqual(sorted(p.name for p in root.glob('*compose*.yml')), ['docker-compose.bot-local.yml', 'docker-compose.production.yml'])
