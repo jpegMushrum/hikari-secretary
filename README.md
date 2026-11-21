@@ -53,8 +53,8 @@ SQLite используется только для ручного перено�
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
 | [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `0.9.0` | Telegram-интерфейс и доставка сообщений |
-| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.4` (в разработке) | Бизнес-логика, API, авторизация и PostgreSQL |
-| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.4` (в разработке) | Административная панель на React и TypeScript |
+| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.3.4` | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.1.4` | Административная панель на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
 пока не назначена. Релизы backend, miniapp и изменения интеграции описаны
