@@ -77,8 +77,13 @@ else:
         path.write_bytes(b'previous verified backup')
         return path
 
-    def test_retains_three_weeks_and_restores_bundle_files(self):
-        obsolete = self.previous("20261030")
+    def test_retains_weekly_backups_for_365_days_and_restores_bundle_files(self):
+        obsolete = self.backups / f'20251120T115959Z-{UUID}.tar'
+        obsolete.touch()
+        boundary = self.backups / f'20251120T120000Z-{UUID}.tar'
+        boundary.touch()
+        expired_week = self.previous("20251109")
+        fourth_week = self.previous("20261030")
         older = self.previous("20261106")
         recent = self.previous("20261113")
         same_week = self.previous("20261118")
@@ -86,8 +91,10 @@ else:
         unrelated.touch()
         result = self.run_backup()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(older.exists() and recent.exists() and unrelated.exists())
-        self.assertFalse(obsolete.exists() or same_week.exists())
+        for retained in (boundary, fourth_week, older, recent, unrelated):
+            self.assertTrue(retained.exists(), retained)
+        for removed in (obsolete, expired_week, same_week):
+            self.assertFalse(removed.exists(), removed)
         archive, = self.backups.glob("20261120*.tar")
         with tarfile.open(archive) as bundle:
             self.assertEqual(set(bundle.getnames()), {'database.dump', 'bot-media.tar', 'admin-media.tar'})

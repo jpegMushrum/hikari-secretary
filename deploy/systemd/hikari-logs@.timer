@@ -1,8 +1,8 @@
 [Unit]
-Description=Send Hikari logs to S3 every 15 minutes
+Description=Send Hikari logs to S3 hourly
 
 [Timer]
-OnCalendar=*-*-* *:00/15:00 UTC
+OnCalendar=*-*-* *:00:00 UTC
 Persistent=true
 
 [Install]

@@ -62,15 +62,17 @@ remote_checksum=$(aws s3 cp "$candidate" - --only-show-errors | sha256sum)
 # Only verified bundles are promoted into the collection used for rotation.
 aws s3 cp "$candidate" "$uri/backups/$id.tar" --copy-props none --only-show-errors
 aws s3api list-objects-v2 --bucket "$bucket" --prefix "$prefix" --output json > "$work/keys.json"
-python3 - "$work/keys.json" "$prefix" > "$work/expired" <<'PY'
+python3 - "$work/keys.json" "$prefix" "${id%%-*}" > "$work/expired" <<'PY'
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 with open(sys.argv[1]) as listing:
     objects = json.load(listing).get("Contents", [])
 name = re.compile(re.escape(sys.argv[2]) + r"([0-9]{8}T[0-9]{6}Z)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tar")
+timestamp_format = "%Y%m%dT%H%M%SZ"
+cutoff = datetime.strptime(sys.argv[3], timestamp_format) - timedelta(days=365)
 weeks = set()
 keys = (obj["Key"] for obj in objects)
 # Managed keys sort by UTC timestamp then UUID, consistently across workers.
@@ -79,10 +81,11 @@ for key in sorted(keys, reverse=True):
     if not match:
         continue
     try:
-        week = datetime.strptime(match[1], "%Y%m%dT%H%M%SZ").isocalendar()[:2]
+        timestamp = datetime.strptime(match[1], timestamp_format)
     except ValueError:
         continue
-    if week in weeks or len(weeks) == 3:
+    week = timestamp.isocalendar()[:2]
+    if timestamp < cutoff or week in weeks:
         print(key)
     else:
         weeks.add(week)
