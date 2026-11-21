@@ -103,7 +103,8 @@ services:
       BOT_SERVICE_TOKEN: local-dev-service-not-for-production
       MEDIA_DIR: /app/data/media
       TARGETS_PATH: /app/targets.json
-      MINIAPP_URL: ''
+      APP_ENV: development
+      MINIAPP_URL: http://localhost:5173
     volumes:
     - ./targets.json:/app/targets.json:ro
     - ./data/media:/app/data/media
