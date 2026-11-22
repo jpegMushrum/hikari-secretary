@@ -7,8 +7,8 @@
 | Каталог | Что в нём |
 | --- | --- |
 | [bot](https://github.com/jpegMushrum/hikari-secretary-bot) | Python/aiogram. Диалоги участников и администраторов, приём сообщений, доставка в Telegram. |
-| [backend](https://github.com/jpegMushrum/hikari-secretary-backend) | Go. Закрытый API бота, Admin API, бизнес-правила, PostgreSQL, миграции и отдельный импортёр SQLite. |
-| [miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp) | React/TypeScript. Административная панель Telegram и локальный браузерный режим для разработки. |
+| [backend](https://github.com/jpegMushrum/hikari-secretary-backend) | Go. Закрытый API бота, Admin API и Member API, бизнес-правила, PostgreSQL, миграции и отдельный импортёр SQLite. |
+| [miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp) | React/TypeScript. Режимы администратора и участника в Telegram, локальный браузерный вход для разработки. |
 | `deploy/` | Конфигурация production nginx, скрипты развёртывания и снимка SQLite, проверки. |
 | `.github/workflows/` | Интеграционные проверки зафиксированных сабмодулей и ручное развёртывание production из `main`. |
 | `docs/` | Архитектура, планы, руководства по эксплуатации. |
@@ -32,5 +32,5 @@
 CI корневого репозитория проверяет компоненты на коммитах, зафиксированных
 в проверяемом коммите платформы. Production получает образы из GHCR по digest.
 Подготовку GitHub Actions и VPS описывает [руководство production](production.md).
-Работающий административный интерфейс и планы пользовательского режима описаны
+Развитие административного интерфейса и режима участника описано
 в [roadmap](miniapp-plan.md).
