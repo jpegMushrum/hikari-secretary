@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   checks:
@@ -79,26 +79,5 @@ jobs:
           BACKEND_IMAGE: ${{ needs.images.outputs.backend }}
           BOT_IMAGE: ${{ needs.images.outputs.bot }}
           MINIAPP_IMAGE: ${{ needs.images.outputs.miniapp }}
-        run: |
-          set -euo pipefail
-          : "${DEPLOY_SSH_KEY:?}" "${DEPLOY_KNOWN_HOSTS:?}" "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}"
-          [[ $DEPLOY_USER =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ && $DEPLOY_HOST != -* ]]
-          [[ $DEPLOY_PORT =~ ^[0-9]{1,5}$ ]] && (( 10#$DEPLOY_PORT > 0 && 10#$DEPLOY_PORT < 65536 )) || exit 1
-          remote_command=$(python3 - <<'PY'
-          import os, shlex
-          path = os.environ["DEPLOY_PATH"]
-          if not path.startswith("/"):
-              raise SystemExit("DEPLOY_PATH must be absolute")
-          args = [os.environ[key] for key in ("GITHUB_SHA", "BACKEND_IMAGE", "BOT_IMAGE", "MINIAPP_IMAGE")]
-          print("cd " + shlex.quote(path) + " && exec bash -s -- " + shlex.join(args))
-          PY
-          )
-          umask 077
-          ssh_dir=$(mktemp -d "$RUNNER_TEMP/deploy-ssh.XXXXXX")
-          trap 'rm -f "$ssh_dir/key" "$ssh_dir/known_hosts"; rmdir "$ssh_dir"' EXIT
-          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
-          ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$ssh_dir/known_hosts" -o ConnectTimeout=15 \
-            -i "$ssh_dir/key" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "$remote_command" < deploy/production-release.sh
+          PRODUCTION_ACTION: release
+        run: bash deploy/production-ssh.sh

@@ -1,0 +1,43 @@
+name: Manage Santa season
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Действие с сезоном
+        type: choice
+        options:
+          - start-santa
+          - close-santa
+        default: start-santa
+        required: true
+      season_id:
+        description: Номер сезона из панели администратора (для close-santa)
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: deploy-production
+  queue: max
+jobs:
+  manage:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Manage season on the installed backend
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          PRODUCTION_ACTION: ${{ inputs.action }}
+          SANTA_SEASON_ID: ${{ inputs.season_id }}
+        run: bash deploy/production-ssh.sh

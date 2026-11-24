@@ -10,6 +10,36 @@ import unittest
 DEPLOY = Path(__file__).resolve().parent
 
 
+@unittest.skipUnless(os.name == "posix", "The Actions runner uses Linux")
+class SantaWorkflowTests(unittest.TestCase):
+    def dispatch(self, action, season_id):
+        with tempfile.TemporaryDirectory() as directory:
+            ssh = Path(directory, "ssh")
+            ssh.write_text('#!/bin/bash\nprintf "%s" "${!#}"\n')
+            ssh.chmod(0o755)
+            return subprocess.run(
+                ["bash", str(DEPLOY / "production-ssh.sh")], capture_output=True, text=True,
+                env={**os.environ, "PATH": os.pathsep.join((directory, os.environ["PATH"])),
+                     "RUNNER_TEMP": directory, "DEPLOY_PATH": "/opt/hikari", "DEPLOY_PORT": "22",
+                     "DEPLOY_HOST": "localhost", "DEPLOY_USER": "test", "DEPLOY_SSH_KEY": "test",
+                     "DEPLOY_KNOWN_HOSTS": "test", "PRODUCTION_ACTION": action, "SANTA_SEASON_ID": season_id},
+            )
+
+    def test_operator_can_start_or_close_a_specific_season(self):
+        for action, season_id, suffix in (("start-santa", "", "santa-start"), ("close-santa", "12", "santa-close 12")):
+            with self.subTest(action=action):
+                result = self.dispatch(action, season_id)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(result.stdout.endswith("/app/api " + suffix), result.stdout)
+
+    def test_close_requires_valid_explicit_id_before_ssh(self):
+        for value in ("", "0", "-1", "1 2", "9223372036854775808"):
+            with self.subTest(value=value):
+                result = self.dispatch("close-santa", value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+
 @unittest.skipUnless(os.name == "posix", "The deployment target runs Linux")
 class ProductionReleaseTests(unittest.TestCase):
     def rollout(self, *, fail_migration=False, reject_commit=False):
