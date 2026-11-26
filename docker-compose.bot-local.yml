@@ -1,6 +1,20 @@
 # Standalone stack; run with docker compose -f docker-compose.bot-local.yml up -d --build
 name: hikari-miniapp-dev
 services:
+  mascot-storage:
+    image: adobe/s3mock:5.0.0
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: hikari-local
+      COM_ADOBE_TESTING_S3MOCK_STORE_ROOT: /s3mockroot
+      COM_ADOBE_TESTING_S3MOCK_STORE_RETAIN_FILES_ON_EXIT: "true"
+    volumes:
+    - mascot_objects:/s3mockroot
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/favicon.ico"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
   database:
     image: postgres:18-alpine
     environment:
@@ -39,6 +53,12 @@ services:
     build: ./backend
     environment:
       APP_ENV: development
+      MASCOT_S3_ENDPOINT: http://mascot-storage:9090
+      MASCOT_S3_BUCKET: hikari-local
+      MASCOT_S3_PREFIX: media/mascot
+      MASCOT_S3_REGION: us-east-1
+      MASCOT_S3_ACCESS_KEY_ID: local-mascot
+      MASCOT_S3_SECRET_ACCESS_KEY: local-only
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
@@ -63,6 +83,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      mascot-storage:
+        condition: service_healthy
     healthcheck:
       test:
       - CMD-SHELL
@@ -116,3 +138,4 @@ services:
 volumes:
   postgres_data: null
   media: null
+  mascot_objects: null

@@ -1,4 +1,4 @@
-name: Manage Santa season
+name: Manage club season
 on:
   workflow_dispatch:
     inputs:
@@ -8,10 +8,12 @@ on:
         options:
           - start-santa
           - close-santa
+          - start-mascot
+          - close-mascot
         default: start-santa
         required: true
       season_id:
-        description: Номер сезона из панели администратора (для close-santa)
+        description: Номер сезона из панели администратора (при закрытии)
         type: string
         required: false
 permissions:
@@ -39,5 +41,5 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           PRODUCTION_ACTION: ${{ inputs.action }}
-          SANTA_SEASON_ID: ${{ inputs.season_id }}
+          SEASON_ID: ${{ inputs.season_id }}
         run: bash deploy/production-ssh.sh

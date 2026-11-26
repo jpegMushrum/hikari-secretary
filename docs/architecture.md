@@ -165,10 +165,20 @@ backend/
 │   │   ├── events/
 │   │   ├── interactions/            # регистрации, посещаемость, отзывы
 │   │   ├── publishing/
-│   │   └── learningcontent/
+│   │   ├── learningcontent/
+│   │   │   ├── domain/
+│   │   │   ├── application/
+│   │   │   ├── adapters/postgres/
+│   │   │   └── adapters/deepseek/
+│   │   └── santa/
+│   │       ├── domain/
+│   │       ├── application/
+│   │       └── adapters/postgres/
 │   └── adapters/
 │       ├── adminapi/                # административный HTTP API
-│       └── botapi/                  # внутренний API бота
+│       ├── botapi/                  # внутренний API бота
+│       ├── memberapi/               # HTTP API участника
+│       └── santaapi/                # HTTP-обработчики «Тайного Санты»
 └── migrations/                       # единый упорядоченный SQL-журнал
 ```
 

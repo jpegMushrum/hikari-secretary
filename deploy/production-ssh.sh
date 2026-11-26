@@ -8,13 +8,15 @@ import os, re, shlex
 path = os.environ["DEPLOY_PATH"]
 if not path.startswith("/"):
     raise SystemExit("DEPLOY_PATH must be absolute")
-if os.environ["PRODUCTION_ACTION"] == "start-santa":
-    command = "docker compose -f docker-compose.production.yml exec -T backend /app/api santa-start"
-elif os.environ["PRODUCTION_ACTION"] == "close-santa":
-    season_id = os.environ.get("SANTA_SEASON_ID", "")
-    if not re.fullmatch(r"[1-9][0-9]{0,18}", season_id) or int(season_id) > 2**63 - 1:
-        raise SystemExit("Enter a positive season ID from the Santa admin panel")
-    command = "docker compose -f docker-compose.production.yml exec -T backend /app/api santa-close " + season_id
+action = os.environ["PRODUCTION_ACTION"]
+if action in ("start-santa", "close-santa", "start-mascot", "close-mascot"):
+    operation, season = action.split("-")
+    command = f"docker compose -f docker-compose.production.yml exec -T backend /app/api {season}-{operation}"
+    if operation == "close":
+        season_id = os.environ.get("SEASON_ID", "")
+        if not re.fullmatch(r"[1-9][0-9]{0,18}", season_id) or int(season_id) > 2**63 - 1:
+            raise SystemExit("Enter a positive season ID from the admin panel")
+        command += " " + season_id
 elif os.environ["PRODUCTION_ACTION"] == "release":
     args = [os.environ[key] for key in ("GITHUB_SHA", "BACKEND_IMAGE", "BOT_IMAGE", "MINIAPP_IMAGE")]
     command = "exec bash -s -- " + shlex.join(args)

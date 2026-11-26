@@ -43,7 +43,9 @@ class ProductionComposeTests(unittest.TestCase):
         config = self.compose_config('docker-compose.bot-local.yml')
         self.assertEqual(config['name'], 'hikari-miniapp-dev')
         services = config['services']
-        self.assertEqual(set(services), {'database', 'migrate', 'backend', 'gateway', 'miniapp', 'bot'})
+        self.assertEqual(set(services), {'database', 'migrate', 'backend', 'gateway', 'miniapp', 'bot', 'mascot-storage'})
+        self.assertFalse(services['mascot-storage'].get('ports'))
+        self.assertEqual(services['backend']['depends_on']['mascot-storage']['condition'], 'service_healthy')
         self.assertEqual(services['backend']['depends_on']['migrate']['condition'], 'service_completed_successfully')
         self.assertEqual(services['backend']['environment']['DATABASE_URL'], services['migrate']['environment']['DATABASE_URL'])
         db_name = services['database']['environment']['POSTGRES_DB']

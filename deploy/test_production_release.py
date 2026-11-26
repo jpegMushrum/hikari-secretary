@@ -22,11 +22,12 @@ class SantaWorkflowTests(unittest.TestCase):
                 env={**os.environ, "PATH": os.pathsep.join((directory, os.environ["PATH"])),
                      "RUNNER_TEMP": directory, "DEPLOY_PATH": "/opt/hikari", "DEPLOY_PORT": "22",
                      "DEPLOY_HOST": "localhost", "DEPLOY_USER": "test", "DEPLOY_SSH_KEY": "test",
-                     "DEPLOY_KNOWN_HOSTS": "test", "PRODUCTION_ACTION": action, "SANTA_SEASON_ID": season_id},
+                     "DEPLOY_KNOWN_HOSTS": "test", "PRODUCTION_ACTION": action, "SEASON_ID": season_id},
             )
 
     def test_operator_can_start_or_close_a_specific_season(self):
-        for action, season_id, suffix in (("start-santa", "", "santa-start"), ("close-santa", "12", "santa-close 12")):
+        for action, season_id, suffix in (("start-santa", "", "santa-start"), ("close-santa", "12", "santa-close 12"),
+                                         ("start-mascot", "", "mascot-start"), ("close-mascot", "12", "mascot-close 12")):
             with self.subTest(action=action):
                 result = self.dispatch(action, season_id)
                 self.assertEqual(result.returncode, 0, result.stderr)
