@@ -71,6 +71,7 @@ services:
       AI_TOPIC_MAX_ATTEMPTS: ${AI_TOPIC_MAX_ATTEMPTS:-5}
       TIMEZONE: ${TIMEZONE:-Europe/Moscow}
       REMINDER_OPTIONS_MINUTES: ${REMINDER_OPTIONS_MINUTES:-30,60,120,360,1440}
+      FIRST_VISIT_ADMIN_USERNAME: ${FIRST_VISIT_ADMIN_USERNAME:-}
       DATABASE_URL: postgres://hikari_dev:local_dev_only@database:5432/hikari_dev?sslmode=disable
       TELEGRAM_BOT_TOKEN: local-miniapp-only-not-a-telegram-token
       ADMIN_TELEGRAM_IDS: '123456789'
