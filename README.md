@@ -1,9 +1,9 @@
 # 光 · Hikari Secretary
 
 ![Статус: работает](https://img.shields.io/badge/status-running-2EA44F)
-[![Bot 1.0.3 в разработке](https://img.shields.io/badge/bot-1.0.3%20dev-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
-[![Backend 0.5.1 в разработке](https://img.shields.io/badge/backend-0.5.1%20dev-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
-[![Miniapp 0.3.1 в разработке](https://img.shields.io/badge/miniapp-0.3.1%20dev-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
+[![Bot 1.0.3](https://img.shields.io/badge/bot-1.0.3-5865F2)](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/CHANGELOG.md)
+[![Backend 0.5.1](https://img.shields.io/badge/backend-0.5.1-00ADD8)](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md)
+[![Miniapp 0.3.1](https://img.shields.io/badge/miniapp-0.3.1-61DAFB)](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)
@@ -61,8 +61,9 @@
 SQLite используется только для ручного переноса со старой установки.
 Бот 1.0.0 перешёл в сопровождение. В выпуск от 22 ноября 2026 года входят интерфейс
 участника в Miniapp 0.2.0, его API в Backend 0.4.0 и вход из Бота 1.0.1.
-Выпуск от 26 ноября 2026 года с Тайным Сантой и выборами маскота подготовлен
-к развёртыванию.
+В версиях Miniapp 0.3.0 и Backend 0.5.0 добавлены Тайный Санта и выборы маскота.
+Выпуск Miniapp 0.3.1, Backend 0.5.1 и бота 1.0.3 от 26 ноября 2026 года
+добавляет сообщение об оформлении пропуска при первой регистрации участника вне ИТМО.
 
 Этот репозиторий — основная точка входа и сборки всей платформы.
 Компоненты подключены как Git-сабмодули; состав сборки фиксируется их
@@ -70,9 +71,9 @@ SQLite используется только для ручного перено�
 
 | Компонент | Версия, указанная в проекте | Назначение |
 | --- | --- | --- |
-| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `1.0.3` в разработке | Telegram-интерфейс и доставка сообщений |
-| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.5.1` в разработке | Бизнес-логика, API, авторизация и PostgreSQL |
-| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.3.1` в разработке | Интерфейсы участника и администратора на React и TypeScript |
+| [Бот](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/README.md) | `1.0.3` | Telegram-интерфейс и доставка сообщений |
+| [Backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/README.md) | `0.5.1` | Бизнес-логика, API, авторизация и PostgreSQL |
+| [Miniapp](https://github.com/jpegMushrum/hikari-secretary-miniapp/blob/main/README.md) | `0.3.1` | Интерфейсы участника и администратора на React и TypeScript |
 
 Эти номера относятся к компонентам. Отдельная версия общего релиза платформы
 пока не назначена. Релизы backend, miniapp и изменения интеграции описаны
