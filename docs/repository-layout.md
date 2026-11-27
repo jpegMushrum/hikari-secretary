@@ -33,4 +33,4 @@ CI корневого репозитория проверяет компонен
 в проверяемом коммите платформы. Production получает образы из GHCR по digest.
 Подготовку GitHub Actions и VPS описывает [руководство production](production.md).
 Развитие административного интерфейса и режима участника описано
-в [roadmap](miniapp-plan.md).
+в [roadmap платформы](roadmap.md).

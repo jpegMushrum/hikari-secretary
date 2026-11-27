@@ -19,7 +19,7 @@
 [Telegram-бот](https://t.me/hikari_secretary_bot) ·
 [Документация](docs/README.md) ·
 [История релизов](CHANGELOG.md) ·
-[Планы развития](docs/miniapp-plan.md)
+[Планы платформы](docs/roadmap.md)
 
 ## Возможности
 
@@ -121,5 +121,6 @@ Production обновляется по ручному запуску GitHub Acti
 - [Черновики и miniapp](https://github.com/jpegMushrum/hikari-secretary-bot/blob/main/docs/miniapp-handoff.md)
 - [Архитектура платформы](docs/architecture.md)
 - [API backend](https://github.com/jpegMushrum/hikari-secretary-backend/blob/main/openapi/openapi.yaml)
-- [Roadmap и приоритеты](docs/miniapp-plan.md)
+- [Возможности и навигация miniapp](docs/miniapp.md)
+- [Roadmap и приоритеты платформы](docs/roadmap.md)
 - [Все руководства](docs/README.md)
