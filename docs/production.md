@@ -13,6 +13,28 @@ S3-совместимый бакет. Журналы хранятся 30 дне�
 окне 365 суток. Установку и обновление таймеров, проверку выгрузки и
 восстановление на отдельном стенде описывает [руководство по архивированию в S3](s3-archive.md).
 
+## Вложения анонсов
+
+Создайте файл `/etc/hikari-announcements/settings` на основе
+[`deploy/announcement-media.env.example`](../deploy/announcement-media.env.example)
+и ограничьте его права до `0600`. Для другого пути задайте
+`ANNOUNCEMENT_MEDIA_ENV_FILE` в корневом `.env`. Compose передаёт
+настройки сервису `backend`.
+
+Укажите `ANNOUNCEMENT_S3_ENDPOINT`, `ANNOUNCEMENT_S3_REGION`,
+`ANNOUNCEMENT_S3_BUCKET`, `ANNOUNCEMENT_S3_PREFIX`,
+`ANNOUNCEMENT_S3_ACCESS_KEY_ID` и `ANNOUNCEMENT_S3_SECRET_ACCESS_KEY`.
+Для Yandex Object Storage пример содержит endpoint
+`https://storage.yandexcloud.net`, регион `ru-central1` и префикс
+`hikari-production/media/announcements`. Сохраните приватный доступ к
+бакету. Дайте сервисному аккаунту чтение и запись объектов только в
+префиксе вложений. Для пробного восстановления нужен доступ на чтение.
+
+После применения миграций backend проверьте авторизованную загрузку и
+просмотр фотографии, затем перенесите исторические вложения и проверьте
+их восстановление на отдельной базе.
+[Команды переноса и проверки](s3-archive.md#приватные-вложения-анонсов).
+
 ## Подготовка GitHub Actions и VPS
 
 Workflow **Platform checks** запускается вручную в GitHub Actions или

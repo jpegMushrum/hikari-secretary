@@ -70,6 +70,8 @@ services:
     - ${BACKEND_ENV_FILE:-./backend/.env}
     - path: ${MASCOT_MEDIA_ENV_FILE:-/etc/hikari-mascot/settings}
       required: false
+    - path: ${ANNOUNCEMENT_MEDIA_ENV_FILE:-/etc/hikari-announcements/settings}
+      required: false
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}

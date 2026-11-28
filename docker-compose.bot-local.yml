@@ -59,6 +59,12 @@ services:
       MASCOT_S3_REGION: us-east-1
       MASCOT_S3_ACCESS_KEY_ID: local-mascot
       MASCOT_S3_SECRET_ACCESS_KEY: local-only
+      ANNOUNCEMENT_S3_ENDPOINT: http://mascot-storage:9090
+      ANNOUNCEMENT_S3_BUCKET: hikari-local
+      ANNOUNCEMENT_S3_PREFIX: media/announcements
+      ANNOUNCEMENT_S3_REGION: us-east-1
+      ANNOUNCEMENT_S3_ACCESS_KEY_ID: local-announcements
+      ANNOUNCEMENT_S3_SECRET_ACCESS_KEY: local-only
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
